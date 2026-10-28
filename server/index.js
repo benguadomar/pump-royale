@@ -3,38 +3,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
+import { Store } from './db.js';
+import { Matchmaker } from './rooms.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 8787;
 const DIST = path.join(__dirname, '..', 'dist');
-const DATA_DIR = path.join(__dirname, 'data');
-const DB_FILE = path.join(DATA_DIR, 'players.json');
 
-const MAX_CHAT_HISTORY = 50;
 const MAX_FEED_HISTORY = 12;
 const MAX_MSG_LEN = 160;
 const MAX_NAME_LEN = 16;
 const CHAT_COOLDOWN_MS = 700;
 
-/** @type {Record<string, {name: string, towers: number, cards: number, wins: number, losses: number}>} */
-let players = {};
-try {
-  players = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-} catch {
-  players = {};
-}
+const store = new Store();
+await store.init();
 
-let saveTimer = null;
-function scheduleSave() {
-  if (saveTimer) return;
-  saveTimer = setTimeout(() => {
-    saveTimer = null;
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFile(DB_FILE, JSON.stringify(players), () => {});
-  }, 1000);
-}
-
-const chatHistory = [];
 const feedHistory = [];
 
 const cleanName = (s) =>
@@ -44,17 +27,7 @@ const cleanName = (s) =>
     .slice(0, MAX_NAME_LEN) || 'Player';
 const cleanText = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_MSG_LEN);
 const cleanId = (s) => String(s ?? '').replace(/[^a-zA-Z0-9-]/g, '').slice(0, 40);
-
-function leaderboard() {
-  const rows = Object.values(players);
-  const top = (key) =>
-    rows
-      .filter((p) => p[key] > 0)
-      .sort((a, b) => b[key] - a[key])
-      .slice(0, 10)
-      .map((p) => ({ name: p.name, value: p[key] }));
-  return { towers: top('towers'), cards: top('cards') };
-}
+const cleanCountry = (s) => (/^[A-Z]{2}$/.test(String(s ?? '')) ? s : null);
 
 // ---------- HTTP (serves the built client in production) ----------
 const MIME = {
@@ -63,6 +36,9 @@ const MIME = {
   '.css': 'text/css',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
+  '.mp4': 'video/mp4',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
   '.svg': 'image/svg+xml',
   '.json': 'application/json',
   '.woff2': 'font/woff2',
@@ -70,24 +46,33 @@ const MIME = {
 
 const server = http.createServer((req, res) => {
   const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
+  if (urlPath === '/healthz') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' }).end('ok');
+    return;
+  }
   let file = path.normalize(path.join(DIST, urlPath));
   if (!file.startsWith(DIST)) {
     res.writeHead(403).end();
     return;
   }
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, 'index.html');
-  fs.readFile(file, (err, buf) => {
+  fs.stat(file, (err, stat) => {
     if (err) {
       res.writeHead(404).end('Run `npm run build` first, or use `npm run dev`.');
       return;
     }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
-    res.end(buf);
+    const hashed = file.includes(`${path.sep}assets${path.sep}index-`);
+    res.writeHead(200, {
+      'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
+      'Content-Length': stat.size,
+      'Cache-Control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache',
+    });
+    fs.createReadStream(file).pipe(res);
   });
 });
 
 // ---------- WebSocket ----------
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 16 * 1024 });
 
 function send(ws, msg) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
@@ -107,6 +92,22 @@ function pushFeed(item) {
   if (feedHistory.length > MAX_FEED_HISTORY) feedHistory.shift();
   broadcast({ t: 'feed', item: entry });
 }
+const broadcastLeaderboard = () => broadcast({ t: 'leaderboard', ...store.leaderboard() });
+
+const matchmaker = new Matchmaker({
+  onMatchEnd(room) {
+    const results = [0, 1].map((team) => room.sim.result(team));
+    room.players.forEach((p, team) => {
+      const r = results[team];
+      store.recordMatch(p.id, { result: r.result, towers: r.myCrowns, cards: r.cardsPlayed, pvp: true });
+    });
+    const winner = room.sim.winner;
+    if (winner != null) {
+      pushFeed({ kind: 'pvp', name: room.players[winner].name, country: room.players[winner].country, opp: room.players[1 - winner].name, crowns: `${results[winner].myCrowns}-${results[winner].enemyCrowns}` });
+    }
+    broadcastLeaderboard();
+  },
+});
 
 wss.on('connection', (ws) => {
   ws.lastChat = 0;
@@ -128,22 +129,21 @@ wss.on('connection', (ws) => {
       const id = cleanId(msg.id);
       if (!id) return;
       const name = cleanName(msg.name);
-      const known = Boolean(players[id]);
-      players[id] ??= { name, towers: 0, cards: 0, wins: 0, losses: 0 };
-      players[id].name = name;
-      scheduleSave();
-
+      const country = cleanCountry(msg.country);
+      const known = store.has(id);
+      store.upsert(id, name, country);
       const alreadyConnected = [...wss.clients].some((c) => c !== ws && c.player?.id === id);
-      ws.player = { id, name };
+      ws.player = { id, name, country };
       send(ws, {
         t: 'welcome',
         online: onlineCount(),
-        chat: chatHistory,
+        chat: store.chat,
         feed: feedHistory,
-        leaderboard: leaderboard(),
+        leaderboard: store.leaderboard(),
+        storage: store.kind,
       });
       if (!alreadyConnected) {
-        pushFeed({ kind: known ? 'back' : 'join', name });
+        pushFeed({ kind: known ? 'back' : 'join', name, country });
         broadcast({ t: 'online', count: onlineCount() });
       }
       return;
@@ -151,44 +151,60 @@ wss.on('connection', (ws) => {
 
     const player = ws.player;
     if (!player) return;
+    const room = matchmaker.roomOf(ws);
 
-    if (msg.t === 'chat') {
-      const text = cleanText(msg.text);
-      const now = Date.now();
-      if (!text || now - ws.lastChat < CHAT_COOLDOWN_MS) return;
-      ws.lastChat = now;
-      const entry = { name: player.name, text, ts: now };
-      chatHistory.push(entry);
-      if (chatHistory.length > MAX_CHAT_HISTORY) chatHistory.shift();
-      broadcast({ t: 'chat', msg: entry });
-      return;
-    }
-
-    if (msg.t === 'rename') {
-      const name = cleanName(msg.name);
-      player.name = name;
-      if (players[player.id]) players[player.id].name = name;
-      scheduleSave();
-      broadcast({ t: 'leaderboard', ...leaderboard() });
-      return;
-    }
-
-    if (msg.t === 'match') {
-      const p = players[player.id];
-      if (!p) return;
-      const towers = Math.max(0, Math.min(3, Number(msg.towers) | 0));
-      const cards = Math.max(0, Math.min(200, Number(msg.cards) | 0));
-      p.towers += towers;
-      p.cards += cards;
-      if (msg.result === 'win') p.wins++;
-      if (msg.result === 'loss') p.losses++;
-      scheduleSave();
-      pushFeed({ kind: 'match', name: player.name, result: msg.result, crowns: towers });
-      broadcast({ t: 'leaderboard', ...leaderboard() });
+    switch (msg.t) {
+      case 'chat': {
+        const text = cleanText(msg.text);
+        const now = Date.now();
+        if (!text || now - ws.lastChat < CHAT_COOLDOWN_MS) return;
+        ws.lastChat = now;
+        const entry = { name: player.name, country: player.country, text, ts: now };
+        store.addChat(entry);
+        broadcast({ t: 'chat', msg: entry });
+        return;
+      }
+      case 'rename': {
+        player.name = cleanName(msg.name);
+        store.upsert(player.id, player.name, player.country);
+        broadcastLeaderboard();
+        return;
+      }
+      case 'match': {
+        // Result of a local match vs the AI: counts towers/cards, not the PvP wins board.
+        const towers = Math.max(0, Math.min(3, Number(msg.towers) | 0));
+        const cards = Math.max(0, Math.min(200, Number(msg.cards) | 0));
+        const result = ['win', 'loss', 'draw'].includes(msg.result) ? msg.result : 'loss';
+        store.recordMatch(player.id, { result, towers, cards, pvp: false });
+        pushFeed({ kind: 'match', name: player.name, country: player.country, result, crowns: towers });
+        broadcastLeaderboard();
+        return;
+      }
+      case 'queue-join':
+        matchmaker.join(ws, msg.deck);
+        return;
+      case 'queue-leave':
+        matchmaker.leave(ws);
+        return;
+      case 'play':
+        room?.play(ws, msg);
+        return;
+      case 'forfeit':
+        room?.forfeit(ws);
+        return;
+      case 'gchat': {
+        const text = cleanText(msg.text);
+        const now = Date.now();
+        if (!room || !text || now - ws.lastChat < CHAT_COOLDOWN_MS) return;
+        ws.lastChat = now;
+        room.chat(ws, text);
+        return;
+      }
     }
   });
 
   ws.on('close', () => {
+    matchmaker.disconnected(ws);
     if (ws.player) broadcast({ t: 'online', count: onlineCount() });
   });
 });

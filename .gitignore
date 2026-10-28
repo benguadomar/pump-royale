@@ -2,3 +2,6 @@ node_modules
 dist
 server/data
 .DS_Store
+.vid
+/gameplay.mp4
+.env

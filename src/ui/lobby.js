@@ -2,6 +2,8 @@ import { h, img, icon } from './dom.js';
 import { openCards } from './cards.js';
 import { openDeck } from './deck.js';
 import { openProfile } from './profile.js';
+import { openModal } from './modal.js';
+import { pingPill, leaderboardPanel, mediaBox, settingsBody, flag, toastMsg } from './widgets.js';
 import { sfx } from '../audio.js';
 import { net } from '../net.js';
 import { state, save } from '../state.js';
@@ -9,136 +11,128 @@ import { state, save } from '../state.js';
 const X_URL = 'https://x.com/';
 const MAX_FEED = 9;
 
-export function pingPill() {
-  const text = h('span', {}, '— ms');
-  const el = h('div', { class: 'ping interactive', title: 'Latency to the game server' }, h('span', { class: 'dot' }), text);
-  const update = () => {
-    const p = net.ping;
-    el.classList.remove('good', 'ok', 'bad');
-    if (!net.connected) {
-      text.textContent = 'offline';
-      el.classList.add('bad');
-    } else if (p != null) {
-      text.textContent = `${p}ms`;
-      el.classList.add(p < 120 ? 'good' : p < 250 ? 'ok' : 'bad');
-    }
-  };
-  net.on('status', update);
-  update();
-  return el;
+function feedText(item) {
+  const name = h('b', {}, item.name);
+  if (item.kind === 'join') return [name, ' joined the arena'];
+  if (item.kind === 'back') return [name, ' is back online'];
+  if (item.kind === 'pvp') return [name, ` beat ${item.opp} in 1v1 · ${item.crowns}`];
+  const verb = item.result === 'win' ? 'won' : item.result === 'loss' ? 'lost' : 'drew';
+  return [name, ` ${verb} vs AI · ${item.crowns} 👑`];
 }
 
 function feedItem(item) {
-  const name = h('b', {}, item.name);
-  let text;
-  let wifi = 'wifi';
-  if (item.kind === 'join') text = [name, ' joined the arena'];
-  else if (item.kind === 'back') text = [name, ' is back online'];
-  else {
-    const verb = item.result === 'win' ? 'won' : item.result === 'loss' ? 'lost' : 'drew';
-    text = [name, ` ${verb} a battle · ${item.crowns} 👑`];
-    wifi = null;
-  }
-  return h('div', { class: `feed-item ${item.kind}` }, wifi ? icon(wifi) : h('span', {}, '⚔️'), h('span', {}, text));
+  const sym = item.kind === 'join' || item.kind === 'back' ? icon('wifi') : h('span', { class: 'sym' }, item.kind === 'pvp' ? '⚔️' : '🤖');
+  return h('div', { class: `feed-item ${item.kind}` }, flag(item.country), sym, h('span', {}, feedText(item)));
 }
 
 function feed() {
   const el = h('div', { class: 'feed' });
   const render = () => el.replaceChildren(...net.feed.slice(-MAX_FEED).reverse().map(feedItem));
-  net.on('welcome', render);
-  net.on('feed', (item) => {
-    el.prepend(feedItem(item));
-    while (el.children.length > MAX_FEED) el.lastChild.remove();
-  });
+  const offs = [
+    net.on('welcome', render),
+    net.on('feed', (item) => {
+      el.prepend(feedItem(item));
+      while (el.children.length > MAX_FEED) el.lastChild.remove();
+    }),
+  ];
   render();
+  el.destroy = () => offs.forEach((o) => o());
   return el;
 }
 
-function leaderboard() {
-  let tab = 'towers';
-  const body = h('tbody', {});
-  const head = h('th', {});
-  const towersBtn = h('button', { class: 'btn gold', onclick: () => setTab('towers') }, img('/assets/ui/icon-crown.png'), 'TOWERS');
-  const cardsBtn = h('button', { class: 'btn', onclick: () => setTab('cards') }, img('/assets/ui/icon-cards.png'), 'CARDS');
-  const iconSrc = () => (tab === 'towers' ? '/assets/ui/icon-crown.png' : '/assets/ui/icon-cards.png');
-
+/** Scrolling top-centre ticker of the newest battles and joins. */
+function liveTicker() {
+  const track = h('div', { class: 'ticker-track' });
   const render = () => {
-    head.replaceChildren(img(iconSrc()), tab.toUpperCase());
-    const rows = net.leaderboard[tab] ?? [];
-    if (!rows.length) {
-      body.replaceChildren(h('tr', {}, h('td', { colSpan: 3, class: 'lb-empty' }, 'No entries yet — be the first!')));
-      return;
-    }
-    body.replaceChildren(
-      ...rows.map((r, i) =>
-        h('tr', { class: r.name === state.name ? 'me' : '' }, h('td', {}, i + 1), h('td', { class: 'name' }, r.name), h('td', {}, img(iconSrc()), r.value)),
+    const items = net.feed.slice(-6).reverse();
+    track.replaceChildren(
+      ...(items.length ? items : [{ kind: 'idle' }]).map((it) =>
+        h('span', { class: 'ticker-item' }, it.kind === 'idle' ? 'Waiting for the first battle…' : [flag(it.country), feedText(it)]),
       ),
     );
   };
-  const setTab = (t) => {
-    sfx.click();
-    tab = t;
-    towersBtn.classList.toggle('gold', t === 'towers');
-    cardsBtn.classList.toggle('gold', t === 'cards');
-    render();
-  };
-  net.on('leaderboard', render);
+  const offs = [net.on('welcome', render), net.on('feed', render)];
   render();
-
-  return h(
+  const el = h(
     'div',
-    { class: 'leaderboard wood panel' },
-    h('div', { class: 'lb-head title' }, img('/assets/ui/icon-trophy.png'), 'LEADERBOARD', h('span', { class: 'live' }, 'LIVE')),
-    h('div', { class: 'lb-tabs' }, towersBtn, cardsBtn),
-    h('table', { class: 'lb-table' }, h('thead', {}, h('tr', {}, h('th', {}, '#'), h('th', {}, 'PLAYER'), head)), body),
+    { class: 'live-ticker wood panel' },
+    h('span', { class: 'ticker-label title' }, '⚔ LIVE FEED'),
+    h('div', { class: 'ticker-window' }, track),
+    h('span', { class: 'ticker-online' }),
   );
+  const online = el.querySelector('.ticker-online');
+  const updOnline = () => (online.textContent = net.connected ? `● ${net.online} online` : '● offline');
+  offs.push(net.on('status', updOnline));
+  updOnline();
+  el.destroy = () => offs.forEach((o) => o());
+  return el;
 }
 
-function settingsPopover(arena) {
-  const val = h('span', { class: 'val' }, `${Math.round(state.settings.volume * 100)}%`);
-  const slider = h('input', {
-    type: 'range',
-    min: 0,
-    max: 100,
-    value: Math.round(state.settings.volume * 100),
-    oninput: (e) => {
-      state.settings.volume = e.target.value / 100;
-      val.textContent = `${e.target.value}%`;
-      save();
-    },
-    onchange: () => sfx.click(),
-  });
-  const high = h('button', { class: 'btn', onclick: () => setGfx('high') }, 'HIGH');
-  const low = h('button', { class: 'btn', onclick: () => setGfx('low') }, 'LOW');
-  const setGfx = (g) => {
+// ------------------------------------------------------------------ wallet
+
+const phantom = () => window.phantom?.solana ?? (window.solana?.isPhantom ? window.solana : null);
+const shortKey = (k) => `${k.slice(0, 4)}…${k.slice(-4)}`;
+
+function walletButton() {
+  const btn = h('button', { class: 'btn wallet-btn' });
+  const render = () => btn.replaceChildren(icon('wallet'), state.wallet ? shortKey(state.wallet) : 'Connect Wallet');
+  btn.onclick = async () => {
     sfx.click();
-    state.settings.graphics = g;
-    save();
-    arena.applyGraphics();
-    high.classList.toggle('gold', g === 'high');
-    low.classList.toggle('gold', g === 'low');
+    const provider = phantom();
+    if (state.wallet) {
+      await provider?.disconnect?.().catch(() => {});
+      state.wallet = null;
+      save();
+      render();
+      toastMsg('Wallet disconnected');
+      return;
+    }
+    if (!provider) {
+      window.open('https://phantom.app/download', '_blank', 'noopener');
+      toastMsg('Install Phantom to connect a Solana wallet');
+      return;
+    }
+    try {
+      const res = await provider.connect();
+      state.wallet = res.publicKey.toString();
+      save();
+      render();
+      toastMsg('Wallet connected');
+    } catch {
+      toastMsg('Wallet connection cancelled');
+    }
   };
-  high.classList.toggle('gold', state.settings.graphics === 'high');
-  low.classList.toggle('gold', state.settings.graphics === 'low');
-  return [
-    h('h3', {}, 'SETTINGS'),
-    h('div', { class: 'setting-row' }, h('span', {}, 'Volume'), slider, val),
-    h('div', { class: 'setting-row' }, h('span', {}, 'Graphics'), h('div', { class: 'seg' }, high, low)),
-  ];
+  render();
+  return btn;
 }
 
-function howToPopover() {
+function openSolanaBattles() {
+  openModal({
+    cls: 'solana-modal',
+    title: 'SOLANA BATTLES',
+    body: [
+      h('p', {}, 'Wager SOL on 1v1 matches against real players. The winner takes the pot, settled on-chain.'),
+      h('div', { class: 'solana-status inset' }, 'Wallet: ', h('b', {}, state.wallet ? shortKey(state.wallet) : 'not connected')),
+      h('div', { class: 'coming-soon title' }, 'COMING SOON'),
+      h('p', { class: 'dim' }, 'Until then, prove yourself in free 1V1 ONLINE matches — wins already count on the live leaderboard.'),
+    ],
+  });
+}
+
+// ------------------------------------------------------------------ popovers
+
+function howToBody() {
   const row = (src, ...text) => h('div', { class: 'howto-row' }, img(src), h('span', {}, text));
   return [
     h('h3', {}, 'HOW TO PLAY'),
-    row('/assets/ui/icon-cards.png', h('b', {}, 'Drag cards'), ' onto your side to deploy troops.'),
-    row('/assets/ui/elixir.png', h('b', {}, 'Elixir'), ' fills over time — spend it wisely.'),
-    row('/assets/ui/icon-crown.png', h('b', {}, 'Destroy towers'), ' for crowns; the King Tower wins.'),
-    row('/assets/ui/icon-play.png', h('b', {}, 'vs AI'), ' — most crowns when the clock runs out wins.'),
+    row('/assets/ui/icon-cards.png', h('b', {}, 'Drag cards'), ' onto your side to deploy troops (or tap a card, then tap the arena; keys 1-4).'),
+    row('/assets/ui/elixir.png', h('b', {}, 'Elixir'), ' fills over time — x2 in the last minute.'),
+    row('/assets/ui/icon-crown.png', h('b', {}, 'Destroy towers'), ' for crowns; the King Tower wins instantly.'),
+    row('/assets/ui/icon-play.png', h('b', {}, '1v1 online'), ' or vs AI — most crowns wins, ties go to sudden death.'),
   ];
 }
 
-function socialsPopover() {
+function socialsBody() {
   return [
     h('h3', {}, 'SOCIALS'),
     h('button', { class: 'btn social-btn', onclick: () => window.open(X_URL, '_blank', 'noopener') }, icon('x'), 'Follow on X'),
@@ -146,8 +140,9 @@ function socialsPopover() {
   ];
 }
 
-export function createLobby({ arena, chat, onPlay }) {
-  const lb = leaderboard();
+export function createLobby({ engine, chat, onPlay, onOnline }) {
+  const lb = leaderboardPanel();
+  const destroyers = [lb.destroy];
 
   let openKey = null;
   let pop = null;
@@ -169,7 +164,6 @@ export function createLobby({ arena, chat, onPlay }) {
     pop.style.top = `${side.offsetTop + btn.offsetTop - 4}px`;
     root.append(pop);
   };
-
   const sideBtn = (key, content, title, onclick) =>
     (sideButtons[key] = h('button', { class: 'btn side-btn', title, onclick: (e) => (e.stopPropagation(), onclick()) }, content));
 
@@ -177,25 +171,25 @@ export function createLobby({ arena, chat, onPlay }) {
     'div',
     { class: 'side-col wood panel', onpointerdown: (e) => e.stopPropagation() },
     sideBtn('profile', img('/assets/ui/icon-profile.png'), 'Profile', () => (closePop(), openProfile())),
-    sideBtn('settings', icon('gear'), 'Settings', () => togglePop('settings', () => settingsPopover(arena))),
-    sideBtn('howto', icon('book'), 'How to play', () => togglePop('howto', howToPopover)),
-    sideBtn('social', icon('share'), 'Socials', () => togglePop('social', socialsPopover)),
+    sideBtn('settings', icon('gear'), 'Settings', () => togglePop('settings', () => settingsBody(engine))),
+    sideBtn('howto', icon('book'), 'How to play', () => togglePop('howto', howToBody)),
+    sideBtn('social', icon('share'), 'Socials', () => togglePop('social', socialsBody)),
   );
 
-  const menuBtn = (cls, src, label, onclick) =>
-    h('button', { class: `btn ${cls}`, onclick: () => (sfx.click(), closePop(), onclick()) }, img(src), label);
+  const menuBtn = (cls, src, label, onclick, title) =>
+    h('button', { class: `btn ${cls}`, title, onclick: () => (sfx.click(), closePop(), onclick()) }, src && img(src), label);
+
+  const ping = pingPill();
+  const feedEl = feed();
+  const ticker = liveTicker();
+  destroyers.push(ping.destroy, feedEl.destroy, ticker.destroy);
 
   const root = h(
     'div',
     { class: 'hud lobby' },
-    h('div', { class: 'ping-row' }, pingPill()),
-    h(
-      'div',
-      { class: 'left-col' },
-      img('/assets/ui/logo.png', 'lobby-logo', 'Pump Royale'),
-      h('div', { class: 'live-label title' }, 'LIVE ARENA · JOINS, BATTLES & CROWNS'),
-      feed(),
-    ),
+    h('div', { class: 'ping-row' }, ping, walletButton()),
+    ticker,
+    h('div', { class: 'left-col' }, img('/assets/ui/logo.png', 'lobby-logo', 'Pump Royale'), h('div', { class: 'live-label title' }, 'LIVE ARENA · JOINS, BATTLES & CROWNS'), feedEl),
     chat.el,
     lb,
     side,
@@ -203,19 +197,17 @@ export function createLobby({ arena, chat, onPlay }) {
       'div',
       { class: 'menu-bar' },
       menuBtn('', '/assets/ui/icon-cards.png', 'CARDS', openCards),
-      menuBtn('gold play', '/assets/ui/icon-play.png', 'PLAY', onPlay),
+      menuBtn('gold play', '/assets/ui/icon-play.png', 'PLAY', onPlay, 'Battle the AI'),
       menuBtn('', '/assets/ui/icon-deck.png', 'DECK', openDeck),
+      menuBtn('online', '/assets/ui/icon-play.png', '1V1 ONLINE', onOnline, 'Battle a real player'),
+      menuBtn('solana', null, h('span', { class: 'sol-label' }, h('span', { class: 'sol-logo' }), 'SOLANA BATTLES'), openSolanaBattles),
     ),
-    h(
-      'div',
-      { class: 'corner-br' },
-      h('button', { class: 'btn', title: 'Follow on X', onclick: () => window.open(X_URL, '_blank', 'noopener') }, icon('x')),
-      h('button', { class: 'btn', disabled: true }, h('span', { class: 'ca' }, 'CA'), 'Coming soon'),
-    ),
+    mediaBox(),
   );
 
   const placeSide = () => (side.style.top = `${lb.offsetTop + lb.offsetHeight + 12}px`);
-  new ResizeObserver(placeSide).observe(lb);
+  const ro = new ResizeObserver(placeSide);
+  ro.observe(lb);
   const onDocDown = () => closePop();
   window.addEventListener('pointerdown', onDocDown);
 
@@ -226,7 +218,9 @@ export function createLobby({ arena, chat, onPlay }) {
     },
     destroy() {
       closePop();
+      ro.disconnect();
       window.removeEventListener('pointerdown', onDocDown);
+      destroyers.forEach((d) => d?.());
       root.remove();
     },
   };

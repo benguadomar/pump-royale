@@ -13,7 +13,7 @@ export const net = {
   online: 0,
   chat: [],
   feed: [],
-  leaderboard: { towers: [], cards: [] },
+  leaderboard: { towers: [], cards: [], wins: [] },
 
   on(type, fn) {
     (handlers[type] ??= new Set()).add(fn);
@@ -41,7 +41,7 @@ function connect() {
 
   ws.onopen = () => {
     net.connected = true;
-    net.send({ t: 'hello', id: state.id, name: state.name });
+    net.send({ t: 'hello', id: state.id, name: state.name, country: state.country });
     sendPing();
     clearInterval(pingTimer);
     pingTimer = setInterval(sendPing, PING_INTERVAL_MS);
@@ -72,7 +72,7 @@ function connect() {
         net.online = msg.online;
         net.chat = msg.chat;
         net.feed = msg.feed;
-        net.leaderboard = msg.leaderboard;
+        net.leaderboard = { wins: [], ...msg.leaderboard };
         emit('welcome');
         emit('status');
         emit('leaderboard');
@@ -92,9 +92,12 @@ function connect() {
         emit('feed', msg.item);
         break;
       case 'leaderboard':
-        net.leaderboard = { towers: msg.towers, cards: msg.cards };
+        net.leaderboard = { towers: msg.towers, cards: msg.cards, wins: msg.wins ?? [] };
         emit('leaderboard');
         break;
+      default:
+        // Match traffic: snap, play-fail, match-found, match-end, queue, gchat, opp-status.
+        emit(msg.t, msg);
     }
   };
 }

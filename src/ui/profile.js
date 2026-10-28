@@ -47,7 +47,7 @@ export function openProfile() {
           'div',
           { class: 'match-row inset' },
           h('span', { class: `res ${m.result}` }, m.result.toUpperCase()),
-          h('span', { class: 'vs' }, `VS ${m.opponent}`),
+          h('span', { class: 'vs' }, h('b', { class: `mode ${m.mode ?? 'ai'}` }, m.mode === 'online' ? '1V1' : 'AI'), ` VS ${m.opponent}`),
           h('span', { class: 'when' }, dateShort(m.ts)),
           h('span', { class: 'score' }, `vs ${m.opponent} · ${m.myCrowns}–${m.enemyCrowns}`),
         ),

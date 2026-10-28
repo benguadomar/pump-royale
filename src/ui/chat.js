@@ -2,6 +2,7 @@ import { h, timeHM } from './dom.js';
 import { net } from '../net.js';
 import { state } from '../state.js';
 import { sfx } from '../audio.js';
+import { flag } from './widgets.js';
 
 const MAX_LINES = 60;
 
@@ -9,6 +10,7 @@ const MAX_LINES = 60;
 export function createChat() {
   let tab = 'global';
   let gameSend = null;
+  let localEcho = true;
   const gameLines = [];
 
   const globalTab = h('button', { class: 'chat-tab active', onclick: () => setTab('global') }, 'GLOBAL');
@@ -33,13 +35,13 @@ export function createChat() {
     input,
   );
 
-  function line({ name, text, ts, kind }) {
+  function line({ name, text, ts, kind, country }) {
     if (kind === 'system') return h('div', { class: 'chat-line system' }, text);
     const cls = kind === 'ai' ? 'ai' : name === state.name ? 'me' : '';
     return h(
       'div',
       { class: `chat-line ${cls}` },
-      h('span', { class: 'who' }, `${name}:`),
+      h('span', { class: 'who' }, flag(country), `${name}:`),
       h('span', { class: 'msg' }, text),
       h('span', { class: 'ts' }, timeHM(ts)),
     );
@@ -81,7 +83,7 @@ export function createChat() {
       if (!net.connected) return append({ kind: 'system', text: 'Offline — reconnecting…' }, 'global');
       net.sendChat(text);
     } else {
-      addGame({ name: state.name, text });
+      if (localEcho) addGame({ name: state.name, country: state.country, text });
       gameSend?.(text);
     }
   }
@@ -118,9 +120,13 @@ export function createChat() {
   return {
     el,
     addGame,
-    /** Turns the GAME tab on for a match (with a send handler), or off when it ends. */
-    setGame(onSend) {
+    /**
+     * Turns the GAME tab on for a match (with a send handler), or off when it ends.
+     * Online the server echoes our own lines back, so `localEcho` is false there.
+     */
+    setGame(onSend, { localEcho: echo = true } = {}) {
       gameSend = onSend;
+      localEcho = echo;
       gameLines.length = 0;
       gameTab.classList.toggle('hidden', !onSend);
       setTab(onSend ? 'game' : 'global');

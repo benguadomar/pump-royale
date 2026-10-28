@@ -1,0 +1,7 @@
+node_modules
+dist
+server/data
+.vid
+.agents
+.git
+/gameplay.mp4
