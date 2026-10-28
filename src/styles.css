@@ -1984,6 +1984,151 @@ button {
   height: 18px;
 }
 
+/* ---------------------------------------------------------------- battle juice */
+
+.dmg-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 1;
+}
+.dmg-num {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-family: var(--font-title);
+  font-size: 17px;
+  color: #fff3d6;
+  -webkit-text-stroke: 3px #2a1206;
+  paint-order: stroke fill;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+  animation: dmg-float 0.9s ease-out forwards;
+}
+.dmg-num.mine {
+  color: #ffb0a4;
+}
+.dmg-num.big {
+  font-size: 27px;
+  color: #ffd04a;
+  -webkit-text-stroke: 4px #4a1500;
+  animation: dmg-crit 0.9s ease-out forwards;
+}
+.dmg-num.heal {
+  color: #7dff8c;
+  -webkit-text-stroke: 3px #0a3312;
+}
+@keyframes dmg-float {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -30%) scale(0.6);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(-50%, -70%) scale(1.15);
+  }
+  30% {
+    transform: translate(-50%, -85%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -190%) scale(0.9);
+  }
+}
+@keyframes dmg-crit {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -30%) scale(0.4) rotate(-8deg);
+  }
+  14% {
+    opacity: 1;
+    transform: translate(-50%, -80%) scale(1.45) rotate(4deg);
+  }
+  30% {
+    transform: translate(-50%, -95%) scale(1.1) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -200%) scale(1);
+  }
+}
+
+/* Elixir: pulse when full, ghost segment drains away on every play. */
+.hand.full .elixir-track {
+  animation: elixir-full 1s ease-in-out infinite;
+}
+.hand.full .elixir-bar img {
+  animation: elixir-drop-bob 1s ease-in-out infinite;
+}
+@keyframes elixir-full {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(240, 120, 255, 0);
+  }
+  50% {
+    box-shadow: 0 0 14px 3px rgba(240, 120, 255, 0.85);
+  }
+}
+@keyframes elixir-drop-bob {
+  50% {
+    transform: scale(1.18) translateY(-2px);
+  }
+}
+.elixir-drain {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  background: linear-gradient(180deg, #fff, #ffc2ff);
+  opacity: 0;
+  pointer-events: none;
+}
+.elixir-drain.go {
+  animation: elixir-drain 0.55s ease-in forwards;
+}
+@keyframes elixir-drain {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scaleX(0);
+    transform-origin: left;
+  }
+}
+
+/* Affordable cards shimmer; a card that just became affordable pops. */
+.hand-card:not(.poor)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.35) 50%, transparent 60%) no-repeat;
+  background-size: 300% 100%;
+  background-position: 150% 0;
+  animation: card-shimmer 3.2s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes card-shimmer {
+  0%,
+  55% {
+    background-position: 150% 0;
+  }
+  85%,
+  100% {
+    background-position: -50% 0;
+  }
+}
+.hand-card.ready-pop {
+  animation: card-ready 0.32s ease-out;
+}
+@keyframes card-ready {
+  40% {
+    transform: scale(1.1) translateY(-4px);
+    filter: brightness(1.3);
+  }
+}
+
 /* ---------------------------------------------------------------- battle emotes */
 
 .emote-col {

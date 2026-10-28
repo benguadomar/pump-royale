@@ -739,7 +739,7 @@ export class Animator {
   }
 
   /** opts: moving, speed (tiles/s), deploy (seconds left), dying (0..1), asleep */
-  update(dt, t, { moving = false, speed = 1, deploy = 0, dying = null, asleep = false } = {}) {
+  update(dt, t, { moving = false, speed = 1, deploy = 0, dying = null, deathStyle = null, asleep = false } = {}) {
     const g = this.g;
     this.since += dt;
     this.hit = Math.max(0, this.hit - dt);
@@ -843,9 +843,22 @@ export class Animator {
       }
     }
     if (dying != null) {
-      root.rotation.x = -smooth(dying) * 1.35;
-      root.position.y -= dying * 0.25;
-      sc *= 1 - dying * 0.5;
+      const k = smooth(dying);
+      if (deathStyle === 'spin') {
+        // Spins on the spot while sinking and shrinking away.
+        root.rotation.y += dying * dying * 14;
+        root.position.y += Math.sin(dying * Math.PI) * 0.5 - dying * 0.4;
+        sc *= 1 - dying * 0.8;
+      } else if (deathStyle === 'thud') {
+        // Heavyweights slam face-first into the ground.
+        root.rotation.x = Math.min(1, dying * 1.6) ** 2 * 1.45;
+        root.position.y -= dying * 0.15;
+        sc *= 1 - Math.max(0, dying - 0.6) * 1.2;
+      } else {
+        root.rotation.x = -k * 1.35;
+        root.position.y -= dying * 0.25;
+        sc *= 1 - dying * 0.5;
+      }
     } else root.rotation.x = 0;
     root.scale.setScalar(sc);
   }

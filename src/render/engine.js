@@ -185,6 +185,30 @@ export class Engine {
     this.shakeAmt = Math.min(1.5, this.shakeAmt + amount);
   }
 
+  /** Near-freeze of everything for `seconds` of real time (impact frames). */
+  hitStop(seconds) {
+    this.freezeLeft = Math.max(this.freezeLeft ?? 0, seconds);
+  }
+
+  /** Slow motion at `scale` for `seconds` of real time (match-winning moments). */
+  slowMo(seconds, scale = 0.3) {
+    this.slowLeft = seconds;
+    this.slowScale = scale;
+  }
+
+  /** Game-time multiplier for this frame; the camera and UI keep running in real time. */
+  timeScale(dt) {
+    if (this.freezeLeft > 0) {
+      this.freezeLeft -= dt;
+      return 0.04;
+    }
+    if (this.slowLeft > 0) {
+      this.slowLeft -= dt;
+      return this.slowScale;
+    }
+    return 1;
+  }
+
   /** Current camera pose (position, look target, vertical image offset, roll). */
   pose() {
     return {
@@ -305,9 +329,11 @@ export class Engine {
       this.shakeAmt *= Math.pow(0.02, dt);
     }
 
+    const gdt = dt * this.timeScale(dt);
+    this.gameTime = (this.gameTime ?? 0) + gdt;
     this.world.update(dt, t);
-    for (const fn of this.updaters) fn(dt, t);
-    this.fx.update(dt);
+    for (const fn of this.updaters) fn(gdt, this.gameTime);
+    this.fx.update(gdt);
     if (this.useBloom) this.pipeline.render();
     else this.renderer.render(this.scene, this.camera);
   }

@@ -113,6 +113,29 @@ export const sfx = {
     [0, 0.45].forEach((d) => tone({ freq: 196, to: 200, dur: 0.6, type: 'sawtooth', gain: 0.09, delay: d }));
   },
   king: () => clip('bell', { gain: 0.6, rate: 0.8 }),
+  land: () => {
+    clip('drop', { gain: 0.5, rate: 0.55 });
+    tone({ freq: 120, to: 50, dur: 0.18, type: 'sine', gain: 0.18 });
+  },
+  heavy: () => {
+    clip('explosion', { gain: 0.35, rate: 1.9 });
+    tone({ freq: 90, to: 40, dur: 0.22, type: 'triangle', gain: 0.22 });
+  },
+  crack: () => {
+    clip(pick('hit1', 'hit2'), { gain: 0.6, rate: 0.45 });
+    clip('falling', { gain: 0.25, rate: 1.4 });
+  },
+  crumble: () => clip('falling', { gain: 0.9, rate: 0.75 }),
+  death: () => tone({ freq: 520, to: 160, dur: 0.16, type: 'triangle', gain: 0.12 }),
+  bones: () => [0, 0.05, 0.11, 0.16].forEach((d) => clip('click', { gain: 0.45, rate: 2.2 + Math.random(), delay: d })),
+  thud: () => {
+    clip('explosion', { gain: 0.6, rate: 0.5 });
+    tone({ freq: 70, to: 28, dur: 0.5, type: 'sine', gain: 0.3 });
+  },
+  elixirFull: () => tone({ freq: 880, to: 1320, dur: 0.18, type: 'sine', gain: 0.07 }),
+  cardReady: () => tone({ freq: 1200, to: 1500, dur: 0.06, type: 'sine', gain: 0.04 }),
+  select: () => clip('click', { gain: 0.6, rate: 1.25, jitter: 0.02 }),
+  drain: () => tone({ freq: 660, to: 330, dur: 0.14, type: 'triangle', gain: 0.06 }),
   win: () => {
     clip('magic', { gain: 0.7 });
     [523, 659, 784, 1046].forEach((f, i) => tone({ freq: f, dur: 0.28, type: 'triangle', gain: 0.18, delay: i * 0.12 }));

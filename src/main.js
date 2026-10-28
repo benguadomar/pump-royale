@@ -97,6 +97,8 @@ async function boot() {
   net.connect();
   const engine = await Engine.create(document.getElementById('scene'));
   engineRef = engine;
+  // Dev-only handle for driving matches from the browser console / automated checks.
+  if (import.meta.env.DEV) window.__pump = { engine, battle: null };
   fitUi();
   progress();
   await Promise.all([
@@ -216,6 +218,7 @@ async function boot() {
       session.destroy();
     }
 
+    if (import.meta.env.DEV) window.__pump.battle = { session, view };
     hud = createBattleHud({
       engine,
       session,

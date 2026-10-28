@@ -47,6 +47,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
   const nextSlot = h('div', { class: 'slot' });
   const cardEls = [0, 1, 2, 3].map((i) => h('div', { class: 'hand-card interactive', onpointerdown: (e) => startDrag(e, i) }));
   const elixirFill = h('div', { class: 'elixir-fill' });
+  const elixirDrain = h('div', { class: 'elixir-drain' });
   const elixirCount = h('span', { class: 'count' }, '5');
   const emoteBtn = h(
     'button',
@@ -62,7 +63,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
       { class: 'elixir-bar' },
       img('/assets/ui/elixir.png'),
       elixirCount,
-      h('div', { class: 'elixir-track' }, elixirFill, h('div', { class: 'elixir-ticks' }, Array.from({ length: MAX_ELIXIR }, () => h('div')))),
+      h('div', { class: 'elixir-track' }, elixirFill, elixirDrain, h('div', { class: 'elixir-ticks' }, Array.from({ length: MAX_ELIXIR }, () => h('div')))),
       h('span', { class: 'max' }, `Max: ${MAX_ELIXIR}`),
     ),
   );
@@ -196,10 +197,24 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
     }
     elixirFill.style.width = `${(me.elixir / MAX_ELIXIR) * 100}%`;
     elixirCount.textContent = Math.floor(me.elixir);
+    const full = me.elixir >= MAX_ELIXIR - 0.001;
+    if (full && !deckBar.classList.contains('full')) sfx.elixirFull();
+    deckBar.classList.toggle('full', full);
+    let readied = false;
     me.hand.forEach((id, i) => {
-      cardEls[i].classList.toggle('poor', CARD_BY_ID[id].cost > me.elixir);
-      cardEls[i].classList.toggle('selected', selected === i);
+      const poor = CARD_BY_ID[id].cost > me.elixir;
+      const el = cardEls[i];
+      if (!poor && el.classList.contains('poor')) {
+        // Just became affordable: a little pop.
+        el.classList.remove('ready-pop');
+        void el.offsetWidth;
+        el.classList.add('ready-pop');
+        readied = true;
+      }
+      el.classList.toggle('poor', poor);
+      el.classList.toggle('selected', selected === i);
     });
+    if (readied) sfx.cardReady();
     myCrowns.textContent = me.crowns;
     oppCrowns.textContent = v.opp.crowns;
     const text = fmtTime(v.time);
@@ -215,8 +230,24 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
   // ---------------------------------------------------------------- deploy input
   const overCanvas = (x, y) => document.elementFromPoint(x, y)?.id === 'scene';
 
-  function tryDeploy(index, clientX, clientY) {
+  /** Tile under the pointer, snapped to the centre of its grid cell. */
+  function pickSnapped(clientX, clientY) {
     const tile = engine.pickTile(clientX, clientY);
+    return tile && { x: Math.floor(tile.x) + 0.5, y: Math.floor(tile.y) + 0.5 };
+  }
+
+  function drainElixir(cost) {
+    const after = last.me.elixir - cost;
+    elixirDrain.classList.remove('go');
+    elixirDrain.style.left = `${(Math.max(0, after) / MAX_ELIXIR) * 100}%`;
+    elixirDrain.style.width = `${(cost / MAX_ELIXIR) * 100}%`;
+    void elixirDrain.offsetWidth;
+    elixirDrain.classList.add('go');
+    sfx.drain();
+  }
+
+  function tryDeploy(index, clientX, clientY) {
+    const tile = pickSnapped(clientX, clientY);
     if (!tile || !last) return false;
     const card = CARD_BY_ID[last.me.hand[index]];
     if (card.cost > last.me.elixir) {
@@ -229,6 +260,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
     }
     const err = session.play(index, tile.x, tile.y);
     if (err) toast(PLAY_ERRORS[err] ?? err, true);
+    else drainElixir(card.cost);
     return !err;
   }
   session.onPlayError = (reason) => toast(PLAY_ERRORS[reason] ?? reason, true);
@@ -255,7 +287,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
     drag.ghost.style.top = `${e.clientY}px`;
     const onArena = overCanvas(e.clientX, e.clientY);
     drag.ghost.classList.toggle('over-arena', onArena);
-    const tile = onArena && engine.pickTile(e.clientX, e.clientY);
+    const tile = onArena && pickSnapped(e.clientX, e.clientY);
     if (tile) view.setPreview(drag.id, tile.x, tile.y);
     else view.setPreview(null);
   }
@@ -275,7 +307,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
       return;
     }
     // A tap selects the card; the next tap on the arena deploys it.
-    sfx.click();
+    sfx.select();
     selected = selected === d.i ? null : d.i;
     if (selected == null) view.hideZones();
   }
@@ -291,7 +323,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
   }
   function onCanvasMove(e) {
     if (selected == null || drag || !last) return;
-    const tile = engine.pickTile(e.clientX, e.clientY);
+    const tile = pickSnapped(e.clientX, e.clientY);
     if (tile) view.setPreview(last.me.hand[selected], tile.x, tile.y);
   }
   const onKey = (e) => {
