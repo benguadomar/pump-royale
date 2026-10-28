@@ -9,7 +9,7 @@ import { EMOTES, EMOTE_IDS, EMOTE_COOLDOWN_MS, emoteImg } from '../data/emotes.j
 
 const DRAG_THRESHOLD = 8;
 const EMOTE_SHOW_MS = 2800;
-const PLAY_ERRORS = { elixir: 'Not enough elixir!', zone: "Can't deploy there", card: 'Card already played', over: 'Match is over' };
+const PLAY_ERRORS = { elixir: 'Not enough elixir!', zone: "Can't deploy there", card: 'Card already played', over: 'Match is over', replay: 'Watching a replay' };
 
 const fmtTime = (s) => {
   const t = Math.max(0, Math.ceil(s));
@@ -97,6 +97,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
     chat.el,
     deckBar,
     mediaBox(),
+    session.mode === 'replay' && replayBar(session),
   );
 
   // ---------------------------------------------------------------- emotes
@@ -156,7 +157,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
   session.onEmote = (id) => showEmote(id, 'opp');
 
   function confirmMenu() {
-    if (session.view()?.over) return onMenu();
+    if (session.view()?.over || session.mode === 'replay') return onMenu();
     const box = h(
       'div',
       { class: 'backdrop' },
@@ -396,13 +397,49 @@ function deployedList(title, counts, cls) {
   );
 }
 
-export function showResult(r, { onPlayAgain, onMenu }) {
+/** Replay controls: who it was against and playback speed. */
+function replayBar(session) {
+  const speeds = [1, 2, 4].map((n) =>
+    h(
+      'button',
+      {
+        class: `btn replay-speed${n === 1 ? ' on' : ''}`,
+        onclick: (e) => {
+          session.speed = n;
+          for (const b of e.currentTarget.parentElement.querySelectorAll('.replay-speed')) b.classList.toggle('on', b === e.currentTarget);
+        },
+      },
+      `${n}x`,
+    ),
+  );
+  return h('div', { class: 'replay-bar wood panel interactive' }, h('span', { class: 'rec' }), h('b', {}, 'REPLAY'), h('span', {}, `vs ${session.oppName}`), speeds);
+}
+
+const CHEST_LABEL = { wooden: 'Wooden', silver: 'Silver', gold: 'Golden', magical: 'Magical' };
+
+/** Rewards row: trophies, XP, pass XP, chest, new arena — filled in once the server answers. */
+function rewardsBody(summary) {
+  if (!summary) return [h('span', { class: 'dim' }, 'Rewards unavailable — the server did not confirm this match.')];
+  const sign = summary.delta > 0 ? '+' : '';
+  return [
+    h('span', { class: `trophy-delta ${summary.delta >= 0 ? 'up' : 'down'}` }, img('/assets/ui/icon-trophy.png'), `${sign}${summary.delta}`, h('small', {}, ` → ${summary.trophies}`)),
+    h('span', {}, h('b', {}, `+${summary.xp}`), ' XP'),
+    summary.passXp > 0 && h('span', {}, h('b', {}, `+${summary.passXp}`), ' Pass XP'),
+    summary.chest && h('span', { class: `chest-won chest-${summary.chest}` }, `${CHEST_LABEL[summary.chest]} Chest!`),
+    summary.chestLost && h('span', { class: 'dim' }, 'Chest slots full — no chest'),
+    summary.newArena && h('span', { class: 'new-arena' }, 'New arena unlocked!'),
+  ];
+}
+
+export function showResult(r, { onPlayAgain, onMenu, replay = false, ranked = false }) {
   const title = { win: 'VICTORY', loss: 'DEFEAT', draw: 'DRAW' }[r.result];
   const close = (fn) => () => {
     sfx.click();
     backdrop.remove();
     fn();
   };
+  const note = ranked ? 'Calculating rewards…' : replay ? 'Replay — no rewards.' : 'Unranked match (offline) — no rewards.';
+  const rewards = h('div', { class: 'result-rewards inset' }, h('span', { class: 'dim' }, note));
   const backdrop = h(
     'div',
     { class: 'backdrop' },
@@ -419,9 +456,15 @@ export function showResult(r, { onPlayAgain, onMenu }) {
         h('span', {}, 'Total cost ', h('b', {}, r.totalCost)),
         h('span', {}, 'Tower dmg ', h('b', {}, r.towerDamage)),
       ),
+      rewards,
       h('div', { class: 'deployed-cols' }, deployedList('YOU DEPLOYED', r.myDeployed, 'you'), deployedList('OPPONENT DEPLOYED', r.oppDeployed, 'opp')),
-      h('div', { class: 'result-actions' }, h('button', { class: 'btn gold', onclick: close(onPlayAgain) }, 'PLAY AGAIN'), h('button', { class: 'btn', onclick: close(onMenu) }, 'MENU')),
+      h('div', { class: 'result-actions' }, !replay && h('button', { class: 'btn gold', onclick: close(onPlayAgain) }, 'PLAY AGAIN'), h('button', { class: 'btn', onclick: close(onMenu) }, 'MENU')),
     ),
   );
   app().append(backdrop);
+  return {
+    setRewards(summary) {
+      rewards.replaceChildren(...rewardsBody(summary).filter(Boolean));
+    },
+  };
 }

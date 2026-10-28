@@ -14,6 +14,8 @@ export const net = {
   chat: [],
   feed: [],
   leaderboard: { towers: [], cards: [], wins: [] },
+  /** Server-owned progression (trophies, currencies, cards, chests...). Read-only here. */
+  profile: null,
 
   on(type, fn) {
     (handlers[type] ??= new Set()).add(fn);
@@ -22,6 +24,21 @@ export const net = {
 
   send(msg) {
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  },
+
+  /** Sends `msg` and resolves with the next `replyType` message (matching `op` if given), or null. */
+  request(msg, replyType, { timeout = 8000, op } = {}) {
+    return new Promise((resolve) => {
+      if (!this.connected) return resolve(null);
+      const timer = setTimeout(() => (off(), resolve(null)), timeout);
+      const off = this.on(replyType, (m) => {
+        if (op && m.op !== op) return;
+        clearTimeout(timer);
+        off();
+        resolve(m);
+      });
+      this.send(msg);
+    });
   },
 
   sendChat(text) {
@@ -62,6 +79,10 @@ function connect() {
       msg = JSON.parse(ev.data);
     } catch {
       return;
+    }
+    if (msg.profile) {
+      net.profile = msg.profile;
+      emit('profile', msg.profile);
     }
     switch (msg.t) {
       case 'pong':

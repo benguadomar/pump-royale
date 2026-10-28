@@ -1,11 +1,11 @@
 import './styles.css';
 import { Engine } from './render/engine.js';
 import { BattleView } from './render/battleView.js';
-import { LocalSession, OnlineSession } from './game/session.js';
+import { LocalSession, OnlineSession, ReplaySession } from './game/session.js';
 import { HAS_PNG } from './data/cards.js';
 import { generateCardArt } from './render/cardArt.js';
 import { EMOTES, emoteImg } from './data/emotes.js';
-import { state, recordMatch, currentArena } from './state.js';
+import { state, save, recordMatch, currentArena } from './state.js';
 import { net } from './net.js';
 import { sfx, loadAudio, playMusic } from './audio.js';
 import { h, img, app } from './ui/dom.js';
@@ -123,7 +123,7 @@ async function boot() {
     engine.world.showLobbyTowers(true);
     engine.setMode('lobby');
     playMusic('lobby');
-    lobby = createLobby({ engine, chat, onPlay: () => startBattle(new LocalSession(state.deck)), onOnline: startOnline });
+    lobby = createLobby({ engine, chat, onPlay: startAi, onOnline: startOnline, onReplay: watchReplay });
     appEl.append(lobby.el);
     lobby.mounted();
   };
@@ -133,6 +133,28 @@ async function boot() {
     lobby?.destroy();
     lobby = null;
   };
+
+  // Trophies are cached locally so arenas/UI work offline; the server copy is the truth.
+  net.on('profile', (p) => {
+    if (state.trophies === p.trophies) return;
+    state.trophies = p.trophies;
+    save();
+  });
+
+  let starting = false;
+  /** Ranked vs AI: the server deals the seed, decks and levels so it can verify the result. */
+  async function startAi() {
+    if (starting) return;
+    starting = true;
+    const match = net.connected ? await net.request({ t: 'ai-start', deck: state.deck }, 'ai-match', { timeout: 4000 }) : null;
+    starting = false;
+    startBattle(new LocalSession(state.deck, match));
+  }
+
+  async function watchReplay(id) {
+    const msg = await net.request({ t: 'replay', id }, 'replay');
+    if (msg?.replay) startBattle(new ReplaySession(msg.replay));
+  }
 
   async function startOnline() {
     leaveLobby();
@@ -156,6 +178,7 @@ async function boot() {
     playMusic(arena.music);
 
     const online = session.mode === 'online';
+    const replay = session.mode === 'replay';
     let finished = false;
     let hud = null;
 
@@ -175,7 +198,16 @@ async function boot() {
     });
 
     const offs = [];
-    if (online) {
+    // Online rewards are pushed by the server as soon as the room ends.
+    const onlineReward = online
+      ? new Promise((resolve) => {
+          const off = net.on('reward', (m) => (off(), resolve(m)));
+          offs.push(off);
+        })
+      : null;
+    if (replay) {
+      chat.setGame(null);
+    } else if (online) {
       chat.setGame((text) => net.send({ t: 'gchat', room: session.room, text }), { localEcho: false });
       offs.push(net.on('gchat', (m) => chat.addGame({ ...m.msg, kind: m.msg.name === state.name ? '' : 'ai' })));
       offs.push(net.on('opp-status', (m) => hud?.setOppOnline(m.online)));
@@ -185,26 +217,32 @@ async function boot() {
       });
       setTimeout(() => !finished && chat.addGame({ name: session.oppName, kind: 'ai', text: say('start') }), 1200);
     }
-    chat.addGame({ kind: 'system', text: online ? `Matched with ${session.oppName} — chat here during the battle.` : 'Match started — chat with your opponent here.' });
+    if (!replay) chat.addGame({ kind: 'system', text: online ? `Matched with ${session.oppName} — chat here during the battle.` : 'Match started — chat with your opponent here.' });
 
     const finish = (r) => {
       if (finished || !r) return;
       finished = true;
-      recordMatch({ result: r.result, myCrowns: r.myCrowns, enemyCrowns: r.enemyCrowns, opponent: online ? session.oppName : 'AI', mode: session.mode });
-      if (!online) net.send({ t: 'match', result: r.result, towers: r.myCrowns, cards: r.cardsPlayed });
+      if (!replay) recordMatch({ result: r.result, myCrowns: r.myCrowns, enemyCrowns: r.enemyCrowns, opponent: online ? session.oppName : 'AI', mode: session.mode });
       r.result === 'win' ? sfx.win() : r.result === 'loss' ? sfx.lose() : sfx.click();
-      if (!online) chat.addGame({ name: session.oppName, kind: 'ai', text: say(r.result === 'win' ? 'loss' : 'win') });
-      showResult(r, {
+      if (session.mode === 'ai') chat.addGame({ name: session.oppName, kind: 'ai', text: say(r.result === 'win' ? 'loss' : 'win') });
+      const ranked = online || (session.mode === 'ai' && session.match);
+      const screen = showResult(r, {
+        replay,
+        ranked,
         onPlayAgain: () => {
           teardown();
           if (online) startOnline();
-          else startBattle(new LocalSession(state.deck));
+          else startAi();
         },
         onMenu: () => {
           teardown();
           enterLobby();
         },
       });
+      // The server decides the rewards: a re-simulated AI match, or the online room's result.
+      if (session.mode === 'ai' && session.match) {
+        net.request({ t: 'ai-end', matchId: session.match.matchId, inputs: session.inputs }, 'reward', { timeout: 15000 }).then((m) => screen.setRewards(m?.summary ?? null));
+      } else if (online) onlineReward.then((m) => screen.setRewards(m?.summary ?? null));
     };
 
     let overAt = null;
@@ -232,12 +270,12 @@ async function boot() {
       view,
       chat,
       onMenu: (forfeit) => {
-        if (forfeit && !finished) {
+        if (forfeit && !finished && !replay) {
           session.forfeit();
           if (!online) {
             const r = session.result();
             recordMatch({ result: 'loss', myCrowns: r.myCrowns, enemyCrowns: r.enemyCrowns, opponent: 'AI', mode: 'ai' });
-            net.send({ t: 'match', result: 'loss', towers: r.myCrowns, cards: r.cardsPlayed });
+            if (session.match) net.send({ t: 'ai-end', matchId: session.match.matchId, inputs: session.inputs });
           } else recordMatch({ result: 'loss', myCrowns: 0, enemyCrowns: 3, opponent: session.oppName, mode: 'online' });
           finished = true;
           sfx.lose();

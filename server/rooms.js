@@ -21,7 +21,12 @@ class Room {
     this.id = id;
     this.players = players; // [{ id, name, country, ws }]
     this.hooks = hooks;
-    this.sim = new BattleSim(players.map((p) => p.deck));
+    const lv = players.map((p) => hooks.levelsFor(p.id, p.deck));
+    this.levels = lv.map((l) => l.tower);
+    this.cardLevels = lv.map((l) => l.cards);
+    this.sim = new BattleSim(players.map((p) => p.deck), { levels: this.levels, cardLevels: this.cardLevels });
+    /** Accepted plays as [tick, team, handIndex, x, y] (canonical coords) for the replay. */
+    this.inputs = [];
     this.tick = 0;
     this.pending = [];
     this.ended = false;
@@ -79,8 +84,10 @@ class Room {
     }
     x = Math.max(0, Math.min(ARENA_W, x));
     y = Math.max(0, Math.min(ARENA_H, y));
+    const tick = this.sim.tick;
     const err = this.sim.playCard(team, i, x, y);
     if (err) this.send(team, { t: 'play-fail', reason: err });
+    else this.inputs.push([tick, team, i, x, y]);
   }
 
   chat(ws, text) {
@@ -104,6 +111,7 @@ class Room {
   forfeit(ws) {
     const team = this.teamOf(ws);
     if (team < 0 || this.ended) return;
+    this.inputs.push([this.sim.tick, team, 'forfeit']);
     this.sim.forfeit(team);
     this.pending.push(...this.sim.drainEvents());
     for (const t of [0, 1]) this.send(t, { t: 'snap', ...encodeSnapshot(this.sim, t, this.pending) });
@@ -117,6 +125,7 @@ class Room {
     this.send(1 - team, { t: 'opp-status', online: false });
     this.disconnectTimers[team] = setTimeout(() => {
       if (this.ended) return;
+      this.inputs.push([this.sim.tick, team, 'forfeit']);
       this.sim.forfeit(team);
       this.end();
     }, RECONNECT_GRACE_MS);
@@ -193,6 +202,7 @@ export class Matchmaker {
       const id = `r${this.nextRoom++}`;
       const players = [a, b].map((q) => ({ id: q.ws.player.id, name: q.ws.player.name, country: q.ws.player.country, ws: q.ws, deck: q.deck }));
       const room = new Room(id, players, {
+        levelsFor: this.hooks.levelsFor,
         onEnd: (r) => {
           this.rooms.delete(r.id);
           for (const p of r.players) this.byPlayer.delete(p.id);

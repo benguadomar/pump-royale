@@ -8,6 +8,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'players.json');
 const CHAT_FILE = path.join(DATA_DIR, 'chat.json');
+const PROFILE_FILE = path.join(DATA_DIR, 'profiles.json');
+const REPLAY_FILE = path.join(DATA_DIR, 'replays.json');
+const REPLAYS_PER_PLAYER = 20;
 const LEADERBOARD_SIZE = 10;
 const CHAT_HISTORY = 50;
 
@@ -34,6 +37,19 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   ts      BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS players_pvp_wins_idx ON players (pvp_wins DESC);
+-- Progression (trophies, currencies, cards, chests, quests, pass) as one JSON document.
+CREATE TABLE IF NOT EXISTS profiles (
+  id         TEXT PRIMARY KEY,
+  data       JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS replays (
+  id         TEXT PRIMARY KEY,
+  player     TEXT NOT NULL,
+  data       JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS replays_player_idx ON replays (player, created_at DESC);
 `;
 
 const blank = (name, country) => ({ name, country, towers: 0, cards: 0, wins: 0, losses: 0, pvpWins: 0, pvpLosses: 0, streak: 0, bestStreak: 0 });
@@ -47,6 +63,8 @@ export class Store {
   async init() {
     this.players = {};
     this.chat = [];
+    this.profiles = {};
+    this.replays = {};
     const url = process.env.DATABASE_URL;
     if (url) {
       neonConfig.webSocketConstructor = ws;
@@ -69,6 +87,8 @@ export class Store {
       }
       const chat = await this.pool.query('SELECT name, country, text, ts FROM chat_messages ORDER BY id DESC LIMIT $1', [CHAT_HISTORY]);
       this.chat = chat.rows.reverse().map((r) => ({ ...r, ts: Number(r.ts) }));
+      const profiles = await this.pool.query('SELECT id, data FROM profiles');
+      for (const r of profiles.rows) this.profiles[r.id] = r.data;
       this.kind = 'neon';
     } else {
       try {
@@ -77,6 +97,12 @@ export class Store {
       } catch {}
       try {
         this.chat = JSON.parse(fs.readFileSync(CHAT_FILE, 'utf8'));
+      } catch {}
+      try {
+        this.profiles = JSON.parse(fs.readFileSync(PROFILE_FILE, 'utf8'));
+      } catch {}
+      try {
+        this.replays = JSON.parse(fs.readFileSync(REPLAY_FILE, 'utf8'));
       } catch {}
       this.kind = 'json';
     }
@@ -153,6 +179,42 @@ export class Store {
       .catch((e) => console.error('player upsert', e.message));
   }
 
+  getProfile(id) {
+    return this.profiles[id] ?? null;
+  }
+
+  saveProfile(id, data) {
+    this.profiles[id] = data;
+    if (!this.pool) return this.scheduleFileSave();
+    this.pool
+      .query('INSERT INTO profiles (id, data, updated_at) VALUES ($1, $2, now()) ON CONFLICT (id) DO UPDATE SET data = $2, updated_at = now()', [id, data])
+      .catch((e) => console.error('profile save', e.message));
+  }
+
+  /** Keeps the newest replays per player (metadata is listed, the full record fetched on demand). */
+  async saveReplay(player, replay) {
+    const list = (this.replays[player] ??= []);
+    list.unshift(replay);
+    list.length = Math.min(list.length, REPLAYS_PER_PLAYER);
+    if (!this.pool) return this.scheduleFileSave();
+    await this.pool.query('INSERT INTO replays (id, player, data) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING', [replay.id, player, replay]).catch((e) => console.error('replay save', e.message));
+  }
+
+  async listReplays(player) {
+    if (this.pool && !this.replays[player]) {
+      const { rows } = await this.pool.query('SELECT data FROM replays WHERE player = $1 ORDER BY created_at DESC LIMIT $2', [player, REPLAYS_PER_PLAYER]);
+      this.replays[player] = rows.map((r) => r.data);
+    }
+    return (this.replays[player] ?? []).map(({ record, ...meta }) => meta);
+  }
+
+  async getReplay(player, id) {
+    const hit = (this.replays[player] ?? []).find((r) => r.id === id);
+    if (hit || !this.pool) return hit ?? null;
+    const { rows } = await this.pool.query('SELECT data FROM replays WHERE id = $1 AND player = $2', [id, player]);
+    return rows[0]?.data ?? null;
+  }
+
   scheduleFileSave() {
     if (this.saveTimer) return;
     this.saveTimer = setTimeout(() => {
@@ -160,6 +222,8 @@ export class Store {
       fs.mkdirSync(DATA_DIR, { recursive: true });
       fs.writeFile(DB_FILE, JSON.stringify(this.players), () => {});
       fs.writeFile(CHAT_FILE, JSON.stringify(this.chat), () => {});
+      fs.writeFile(PROFILE_FILE, JSON.stringify(this.profiles), () => {});
+      fs.writeFile(REPLAY_FILE, JSON.stringify(this.replays), () => {});
     }, 1000);
   }
 }

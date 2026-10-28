@@ -1,5 +1,6 @@
 import { CARD_BY_ID, TOWER_SPELL_FACTOR, isSpell } from '../data/cards.js';
 import { ARENA_H, ARENA_W, RIVER_Y, BRIDGES_X } from './constants.js';
+import { rng } from './sim.js';
 
 const TANKS = ['giant', 'pekka', 'hog-rider', 'balloon', 'prince'];
 // Preferred follow-up for each win condition; falls back to any ranged/swarm support.
@@ -16,8 +17,6 @@ const SWARM_SPELLS = new Set(['arrows', 'zap', 'fireball']);
 /** Minimum enemy hp a damage spell must remove to be worth casting. */
 const SPELL_VALUE = { arrows: 520, zap: 330, fireball: 900 };
 
-const rand = (a, b) => a + Math.random() * (b - a);
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
 /**
  * Autonomous opponent with the same elixir pool and regen as a player. It defends
@@ -25,11 +24,21 @@ const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
  * a win condition first, then its combo partner right behind it.
  */
 export class BattleAI {
-  constructor(sim, team) {
+  /** Randomness comes from the match seed so a recorded match replays identically. */
+  constructor(sim, team, random = rng((sim.seed ^ Math.imul(team + 1, 0x9e3779b1)) >>> 0)) {
     this.sim = sim;
     this.team = team;
-    this.think = rand(2, 3.5);
+    this.random = random;
+    this.think = this.rand(2, 3.5);
     this.pending = null;
+  }
+
+  rand(a, b) {
+    return a + this.random() * (b - a);
+  }
+
+  pick(arr) {
+    return arr[Math.floor(this.random() * arr.length)];
   }
 
   get side() {
@@ -48,7 +57,7 @@ export class BattleAI {
   update(dt) {
     this.think -= dt;
     if (this.think > 0) return;
-    this.think = rand(0.45, 1.0);
+    this.think = this.rand(0.45, 1.0);
     if (this.castSpells()) return;
     if (this.followUp()) return;
     if (this.defend()) return;
@@ -180,7 +189,7 @@ export class BattleAI {
     const airShare = threats.filter((t) => t.air).reduce((s, t) => s + t.hp, 0) / Math.max(1, threatHp);
 
     const score = ({ card }) => {
-      let s = card.dps / 100 + Math.random() * 0.8;
+      let s = card.dps / 100 + this.random() * 0.8;
       if (isTank && TANK_COUNTERS.has(card.id)) s += 4;
       if (buildingHunter && (card.id === 'cannon' || card.id === 'tesla' || card.id === 'inferno-tower')) s += 3;
       if (swarm && (card.splash || card.spin)) s += 4;
@@ -207,15 +216,15 @@ export class BattleAI {
 
   attack() {
     const elixir = this.side.elixir;
-    if (elixir < 7 && Math.random() < 0.9) return;
+    if (elixir < 7 && this.random() < 0.9) return;
     const options = this.hand();
     const tanks = options.filter(({ card }) => TANKS.includes(card.id));
-    const choice = tanks.length ? pick(tanks) : elixir >= 9.5 ? pick(options.filter(({ card }) => card.type !== 'Building')) : null;
+    const choice = tanks.length ? this.pick(tanks) : elixir >= 9.5 ? this.pick(options.filter(({ card }) => card.type !== 'Building')) : null;
     if (!choice) return;
 
     const lane = this.weakerLane();
     const slow = choice.card.speed === 'Slow';
-    const y = slow ? rand(2.5, 4) : rand(11, 13.5);
+    const y = slow ? this.rand(2.5, 4) : this.rand(11, 13.5);
     if (this.tryPlay(choice, lane, this.y(y)) && COMBOS[choice.card.id]) {
       this.pending = { tank: this.lastSpawned(choice.card.id), partners: COMBOS[choice.card.id], tries: 8 };
     }
@@ -231,7 +240,7 @@ export class BattleAI {
     const [l, r] = BRIDGES_X;
     const hl = hpAt(l);
     const hr = hpAt(r);
-    if (Math.abs(hl - hr) < 200) return Math.random() < 0.5 ? l : r;
+    if (Math.abs(hl - hr) < 200) return this.random() < 0.5 ? l : r;
     return hl < hr ? l : r;
   }
 }

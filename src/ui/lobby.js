@@ -8,6 +8,7 @@ import { sfx } from '../audio.js';
 import { net } from '../net.js';
 import { state, save, currentArena } from '../state.js';
 import { ARENAS } from '../data/arenas.js';
+import { resourceBar, chestSlots, questsBody } from './progress.js';
 
 const X_URL = 'https://x.com/';
 const MAX_FEED = 9;
@@ -128,7 +129,7 @@ function socialsBody() {
   ];
 }
 
-export function createLobby({ engine, chat, onPlay, onOnline }) {
+export function createLobby({ engine, chat, onPlay, onOnline, onReplay }) {
   const lb = leaderboardPanel();
   const destroyers = [lb.destroy];
 
@@ -151,6 +152,8 @@ export function createLobby({ engine, chat, onPlay, onOnline }) {
     pop = h('div', { class: 'popover wood panel', onpointerdown: (e) => e.stopPropagation() }, build());
     pop.style.top = `${side.offsetTop + btn.offsetTop - 4}px`;
     root.append(pop);
+    const overflow = pop.getBoundingClientRect().bottom - (root.getBoundingClientRect().bottom - 12);
+    if (overflow > 0) pop.style.top = `${Math.max(12, pop.offsetTop - overflow)}px`;
   };
   const sideBtn = (key, content, title, onclick) =>
     (sideButtons[key] = h('button', { class: 'btn side-btn', title, onclick: (e) => (e.stopPropagation(), onclick()) }, content));
@@ -158,7 +161,8 @@ export function createLobby({ engine, chat, onPlay, onOnline }) {
   const side = h(
     'div',
     { class: 'side-col wood panel', onpointerdown: (e) => e.stopPropagation() },
-    sideBtn('profile', img('/assets/ui/icon-profile.png'), 'Profile', () => (closePop(), openProfile())),
+    sideBtn('profile', img('/assets/ui/icon-profile.png'), 'Profile', () => (closePop(), openProfile({ onReplay }))),
+    sideBtn('quests', icon('quest'), 'Quests & Season Pass', () => togglePop('quests', questsBody)),
     sideBtn('settings', icon('gear'), 'Settings', () => togglePop('settings', () => settingsBody(engine))),
     sideBtn('howto', icon('book'), 'How to play', () => togglePop('howto', howToBody)),
     sideBtn('social', icon('share'), 'Socials', () => togglePop('social', socialsBody)),
@@ -207,13 +211,17 @@ export function createLobby({ engine, chat, onPlay, onOnline }) {
   const ping = pingPill();
   const feedEl = feed();
   const ticker = liveTicker();
-  destroyers.push(ping.destroy, feedEl.destroy, ticker.destroy);
+  const resources = resourceBar();
+  const chests = chestSlots(engine);
+  destroyers.push(ping.destroy, feedEl.destroy, ticker.destroy, resources.destroy, chests.destroy);
 
   const root = h(
     'div',
     { class: 'hud lobby' },
     h('div', { class: 'ping-row' }, ping, walletButton()),
+    resources.el,
     ticker,
+    chests.el,
     h('div', { class: 'left-col' }, img('/assets/ui/logo.png', 'lobby-logo', 'Pump Royale'), h('div', { class: 'live-label title' }, 'LIVE ARENA · JOINS, BATTLES & CROWNS'), feedEl),
     chat.el,
     lb,

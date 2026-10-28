@@ -9,6 +9,7 @@ import { ARENA_W, ARENA_H } from '../sim/constants.js';
 import { skyColor, envSkyColor, applyTheme } from './shaders.js';
 import { buildWorld } from './world.js';
 import { Fx } from './fx.js';
+import { buildChest } from './models.js';
 import { state } from '../state.js';
 
 export const tileToWorld = (x, y, h = 0) => new THREE.Vector3(x - ARENA_W / 2, h, ARENA_H / 2 - y);
@@ -166,6 +167,57 @@ export class Engine {
     this.mode = mode;
     this.resize();
     this.transition = { from, t: 0, dur: mode === 'battle' ? 1.4 : 1.1 };
+  }
+
+  /**
+   * Shows a chest floating in front of the camera for the opening screen. It drops in and
+   * wobbles; `open()` shakes it, flips the lid and bursts sparkles. `dispose()` removes it.
+   */
+  showChest(type) {
+    const chest = buildChest(type);
+    const holder = new THREE.Group();
+    holder.add(chest.root);
+    holder.scale.setScalar(0.8);
+    this.scene.add(holder);
+    const glow = { wooden: [1, 0.85, 0.5], silver: [0.85, 0.92, 1], gold: [1, 0.85, 0.3], magical: [0.9, 0.5, 1] }[type] ?? [1, 1, 1];
+    let t = 0;
+    let openT = null;
+    const fwd = new THREE.Vector3();
+    const off = this.onUpdate((dt) => {
+      t += dt;
+      // Unproject a screen point so the chest stays centred despite the view offset.
+      fwd.set(0, 0.12, 0.5).unproject(this.camera).sub(this.camera.position).normalize();
+      holder.position.copy(this.camera.position).addScaledVector(fwd, 7);
+      holder.position.y -= 0.9;
+      holder.lookAt(this.camera.position.x, holder.position.y, this.camera.position.z);
+      const drop = Math.max(0, 1 - t / 0.45);
+      chest.root.position.y = drop * drop * 4 + (drop === 0 && t < 0.7 ? Math.sin((t - 0.45) * 25) * 0.08 * (0.7 - t) * 4 : 0);
+      chest.root.rotation.z = openT == null ? Math.sin(t * 2.2) * 0.05 : 0;
+      if (openT != null) {
+        openT += dt;
+        const shake = openT < 0.45 ? Math.sin(openT * 70) * 0.06 * (1 - openT / 0.45) : 0;
+        chest.root.rotation.y = shake;
+        const k = Math.min(1, Math.max(0, (openT - 0.45) / 0.25));
+        chest.groups.lid.rotation.x = -k * 1.9;
+      }
+    });
+    return {
+      open: () =>
+        new Promise((resolve) => {
+          openT = 0;
+          setTimeout(() => {
+            const p = holder.getWorldPosition(new THREE.Vector3());
+            p.y += 0.9;
+            this.fx.sparks(p, 40, glow, 7);
+            this.fx.spawn('glow', p, { size: 4, life: 0.5, tint: glow });
+            resolve();
+          }, 650);
+        }),
+      dispose: () => {
+        off();
+        this.scene.remove(holder);
+      },
+    };
   }
 
   /** Re-themes the whole diorama for an arena: palette uniforms, fog, sunlight and props. */

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { Store } from './db.js';
 import { Matchmaker } from './rooms.js';
+import { Economy } from './economy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 8787;
@@ -17,6 +18,7 @@ const CHAT_COOLDOWN_MS = 700;
 
 const store = new Store();
 await store.init();
+const economy = new Economy(store);
 
 const feedHistory = [];
 
@@ -72,7 +74,7 @@ const server = http.createServer((req, res) => {
 });
 
 // ---------- WebSocket ----------
-const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 16 * 1024 });
+const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 64 * 1024 });
 
 function send(ws, msg) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
@@ -95,7 +97,12 @@ function pushFeed(item) {
 const broadcastLeaderboard = () => broadcast({ t: 'leaderboard', ...store.leaderboard() });
 
 const matchmaker = new Matchmaker({
+  levelsFor: (id, deck) => economy.levelsFor(economy.profile(id), deck),
   onMatchEnd(room) {
+    economy
+      .pvpEnd(room)
+      .then((out) => out.forEach((o, team) => room.players[team].ws && send(room.players[team].ws, { t: 'reward', ...o })))
+      .catch((e) => console.error('pvp rewards', e));
     const results = [0, 1].map((team) => room.sim.result(team));
     room.players.forEach((p, team) => {
       const r = results[team];
@@ -134,6 +141,7 @@ wss.on('connection', (ws) => {
       store.upsert(id, name, country);
       const alreadyConnected = [...wss.clients].some((c) => c !== ws && c.player?.id === id);
       ws.player = { id, name, country };
+      send(ws, { t: 'profile', profile: economy.profile(id) });
       send(ws, {
         t: 'welcome',
         online: onlineCount(),
@@ -170,16 +178,48 @@ wss.on('connection', (ws) => {
         broadcastLeaderboard();
         return;
       }
-      case 'match': {
-        // Result of a local match vs the AI: counts towers/cards, not the PvP wins board.
-        const towers = Math.max(0, Math.min(3, Number(msg.towers) | 0));
-        const cards = Math.max(0, Math.min(200, Number(msg.cards) | 0));
-        const result = ['win', 'loss', 'draw'].includes(msg.result) ? msg.result : 'loss';
-        store.recordMatch(player.id, { result, towers, cards, pvp: false });
-        pushFeed({ kind: 'match', name: player.name, country: player.country, result, crowns: towers });
-        broadcastLeaderboard();
+      case 'ai-start': {
+        const m = economy.aiStart(player.id, msg.deck);
+        if (m.error) return send(ws, { t: 'econ', op: 'ai-start', error: m.error });
+        send(ws, { t: 'ai-match', matchId: m.matchId, seed: m.seed, decks: m.decks, levels: m.levels, cardLevels: m.cardLevels, oppName: m.oppName });
         return;
       }
+      case 'ai-end': {
+        // The server re-simulates the match from its seed + the recorded plays before rewarding.
+        economy.aiEnd(player.id, String(msg.matchId ?? ''), msg.inputs).then((out) => {
+          if (out.error) return send(ws, { t: 'econ', op: 'ai-end', error: out.error });
+          const r = out.result;
+          store.recordMatch(player.id, { result: r.result, towers: r.myCrowns, cards: r.cardsPlayed, pvp: false });
+          pushFeed({ kind: 'match', name: player.name, country: player.country, result: r.result, crowns: r.myCrowns });
+          broadcastLeaderboard();
+          send(ws, { t: 'reward', ...out });
+        });
+        return;
+      }
+      case 'chest-start':
+      case 'chest-open':
+      case 'upgrade':
+      case 'quest-claim':
+      case 'pass-claim':
+      case 'road-claim': {
+        const ops = {
+          'chest-start': () => economy.chestStart(player.id, Number(msg.slot) | 0),
+          'chest-open': () => economy.chestOpen(player.id, Number(msg.slot) | 0, Boolean(msg.gems)),
+          upgrade: () => economy.upgrade(player.id, String(msg.card ?? '')),
+          'quest-claim': () => economy.claimQuest(player.id, Number(msg.i) | 0),
+          'pass-claim': () => economy.claimPass(player.id, msg.tier),
+          'road-claim': () => economy.claimRoad(player.id, msg.at),
+        };
+        const out = ops[msg.t]();
+        send(ws, { t: 'econ', op: msg.t, ...out });
+        return;
+      }
+      case 'replays':
+        economy.store.listReplays(player.id).then((list) => send(ws, { t: 'replays', list }));
+        return;
+      case 'replay':
+        economy.store.getReplay(player.id, String(msg.id ?? '')).then((replay) => send(ws, { t: 'replay', replay }));
+        return;
       case 'queue-join':
         matchmaker.join(ws, msg.deck);
         return;

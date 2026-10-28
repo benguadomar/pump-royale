@@ -1,19 +1,28 @@
 import { BattleSim, randomDeck } from '../sim/sim.js';
 import { BattleAI } from '../sim/ai.js';
-import { decodeSnapshot } from '../sim/snapshot.js';
-import { ELIXIR_PER_SEC, MAX_ELIXIR } from '../sim/constants.js';
+import { decodeSnapshot, encodeSnapshot, eventFor } from '../sim/snapshot.js';
+import { ELIXIR_PER_SEC, MAX_ELIXIR, SIM_DT } from '../sim/constants.js';
+import { ReplayDriver, roundPos } from '../sim/replay.js';
 import { EMOTE_COOLDOWN_MS } from '../data/emotes.js';
 import { net } from '../net.js';
 
 const AI_NAMES = ['Sir Bot-a-Lot', 'Grumblebeard', 'Lady Elixira', 'Count Crumble', 'Old Tusk'];
 const INTERP_DELAY_MS = 110;
 
-/** Match vs. the AI: the full simulation runs in the browser. */
+/**
+ * Match vs. the AI: the full simulation runs in the browser. With a server `match`
+ * (seed, decks, levels) every play is recorded so the server can re-run the match and
+ * award trophies; without one (offline) it is a casual unranked game.
+ */
 export class LocalSession {
-  constructor(deck) {
+  constructor(deck, match = null) {
     this.mode = 'ai';
-    this.oppName = AI_NAMES[Math.floor(Math.random() * AI_NAMES.length)];
-    this.sim = new BattleSim([deck, randomDeck()]);
+    this.match = match;
+    this.oppName = match?.oppName ?? AI_NAMES[Math.floor(Math.random() * AI_NAMES.length)];
+    this.sim = match
+      ? new BattleSim(match.decks, { seed: match.seed, levels: match.levels, cardLevels: match.cardLevels })
+      : new BattleSim([deck, randomDeck()]);
+    this.inputs = [];
     const ai = new BattleAI(this.sim, 1);
     this.sim.onStep = (dt) => ai.update(dt);
     this.onEmote = null;
@@ -62,10 +71,14 @@ export class LocalSession {
 
   /** Returns null on success or a reason string. */
   play(handIndex, x, y) {
-    return this.sim.playCard(0, handIndex, x, y);
+    const tick = this.sim.tick;
+    const err = this.sim.playCard(0, handIndex, roundPos(x), roundPos(y));
+    if (!err) this.inputs.push([tick, 0, handIndex, roundPos(x), roundPos(y)]);
+    return err;
   }
 
   forfeit() {
+    this.inputs.push([this.sim.tick, 0, 'forfeit']);
     this.sim.forfeit(0);
   }
 
@@ -168,4 +181,58 @@ export class OnlineSession {
   destroy() {
     this.offs.forEach((off) => off());
   }
+}
+
+/**
+ * Plays back a stored match from the viewer's side (`replay.team`), re-simulated from its
+ * seed and recorded inputs. The board is mirrored like an online snapshot for team 1.
+ */
+export class ReplaySession {
+  constructor(replay) {
+    this.mode = 'replay';
+    this.team = replay.team ?? 0;
+    this.oppName = replay.opp;
+    this.driver = new ReplayDriver(replay.record);
+    this.sim = this.driver.sim;
+    this.speed = 1;
+    this.acc = 0;
+    this.events = [];
+    this.onEmote = null;
+    this.onPlayError = null;
+  }
+
+  update(dt) {
+    this.acc += Math.min(dt, 0.25) * this.speed;
+    while (this.acc >= SIM_DT && !this.sim.over) {
+      this.acc -= SIM_DT;
+      this.driver.step();
+      this.events.push(...this.sim.drainEvents().map((ev) => eventFor(ev, this.team)));
+    }
+  }
+
+  view() {
+    return decodeSnapshot(encodeSnapshot(this.sim, this.team, []));
+  }
+
+  drainEvents() {
+    const ev = this.events;
+    this.events = [];
+    return ev;
+  }
+
+  play() {
+    return 'replay';
+  }
+
+  emote() {}
+
+  forfeit() {
+    this.sim.finish(this.sim.winner ?? null);
+  }
+
+  result() {
+    return this.sim.result(this.team);
+  }
+
+  destroy() {}
 }

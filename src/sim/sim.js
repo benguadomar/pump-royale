@@ -42,7 +42,7 @@ export function shuffle(a, rand = Math.random) {
   return a;
 }
 
-export const randomDeck = () => shuffle(CARDS.map((c) => c.id)).slice(0, 8);
+export const randomDeck = (rand = Math.random) => shuffle(CARDS.map((c) => c.id), rand).slice(0, 8);
 
 /** Per-team hand, elixir and stats. The played card goes to the back of the queue. */
 class Side {
@@ -94,6 +94,8 @@ export class BattleSim {
     this.events = [];
     this.nextId = 1;
     this.acc = 0;
+    /** Fixed steps simulated so far; recorded inputs are keyed by it. */
+    this.tick = 0;
     this.sides = decks.map((d, i) => new Side(d, this.rand, opts.levels?.[i] ?? BASE_LEVEL, opts.cardLevels?.[i]));
     for (const t of TOWER_LAYOUT) this.spawnTower(t);
   }
@@ -325,6 +327,7 @@ export class BattleSim {
 
   step(dt) {
     if (this.over) return;
+    this.tick++;
     this.time -= dt;
     this.elapsed += dt;
     const rate = ELIXIR_PER_SEC * (this.doubleElixir ? 2 : 1);
