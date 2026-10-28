@@ -106,19 +106,6 @@ function walletButton() {
   return btn;
 }
 
-function openSolanaBattles() {
-  openModal({
-    cls: 'solana-modal',
-    title: 'SOLANA BATTLES',
-    body: [
-      h('p', {}, 'Wager SOL on 1v1 matches against real players. The winner takes the pot, settled on-chain.'),
-      h('div', { class: 'solana-status inset' }, 'Wallet: ', h('b', {}, state.wallet ? shortKey(state.wallet) : 'not connected')),
-      h('div', { class: 'coming-soon title' }, 'COMING SOON'),
-      h('p', { class: 'dim' }, 'Until then, prove yourself in free 1V1 ONLINE matches — wins already count on the live leaderboard.'),
-    ],
-  });
-}
-
 // ------------------------------------------------------------------ popovers
 
 function howToBody() {
@@ -200,7 +187,6 @@ export function createLobby({ engine, chat, onPlay, onOnline }) {
       menuBtn('gold play', '/assets/ui/icon-play.png', 'PLAY', onPlay, 'Battle the AI'),
       menuBtn('', '/assets/ui/icon-deck.png', 'DECK', openDeck),
       menuBtn('online', '/assets/ui/icon-play.png', '1V1 ONLINE', onOnline, 'Battle a real player'),
-      menuBtn('solana', null, h('span', { class: 'sol-label' }, h('span', { class: 'sol-logo' }), 'SOLANA BATTLES'), openSolanaBattles),
     ),
     mediaBox(),
   );

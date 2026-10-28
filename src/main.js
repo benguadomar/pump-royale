@@ -3,6 +3,7 @@ import { Engine } from './render/engine.js';
 import { BattleView } from './render/battleView.js';
 import { LocalSession, OnlineSession } from './game/session.js';
 import { CARDS, TOWERS, cardImg } from './data/cards.js';
+import { EMOTES, emoteImg } from './data/emotes.js';
 import { state, recordMatch } from './state.js';
 import { net } from './net.js';
 import { sfx, loadAudio, playMusic } from './audio.js';
@@ -31,6 +32,7 @@ const UI_IMAGES = [
   '/assets/ui/icon-play.png',
   '/assets/ui/icon-profile.png',
   '/assets/ui/icon-trophy.png',
+  ...EMOTES.map((e) => emoteImg(e.id)),
 ];
 
 const AI_LINES = {
@@ -52,7 +54,9 @@ function fitUi() {
   appEl.style.width = `${window.innerWidth / s}px`;
   appEl.style.height = `${window.innerHeight / s}px`;
   appEl.style.transform = `scale(${s})`;
-  engineRef?.setInsets({ top: BATTLE_INSETS.top * s, bottom: BATTLE_INSETS.bottom * s, side: Math.min(BATTLE_INSETS.side * s, window.innerWidth * 0.22) });
+  const portrait = window.innerWidth < window.innerHeight;
+  const side = portrait ? window.innerWidth * 0.1 : Math.min(BATTLE_INSETS.side * s, window.innerWidth * 0.22);
+  engineRef?.setInsets({ top: BATTLE_INSETS.top * s, bottom: BATTLE_INSETS.bottom * s, side });
 }
 window.addEventListener('resize', fitUi);
 fitUi();

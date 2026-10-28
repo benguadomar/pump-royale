@@ -5,8 +5,10 @@ import { sfx } from '../audio.js';
 import { state } from '../state.js';
 import { CARD_BY_ID, cardImg } from '../data/cards.js';
 import { MAX_ELIXIR } from '../sim/constants.js';
+import { EMOTES, EMOTE_IDS, EMOTE_COOLDOWN_MS, emoteImg } from '../data/emotes.js';
 
 const DRAG_THRESHOLD = 8;
+const EMOTE_SHOW_MS = 2800;
 const PLAY_ERRORS = { elixir: 'Not enough elixir!', zone: "Can't deploy there", card: 'Card already played', over: 'Match is over' };
 
 const fmtTime = (s) => {
@@ -46,10 +48,15 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
   const cardEls = [0, 1, 2, 3].map((i) => h('div', { class: 'hand-card interactive', onpointerdown: (e) => startDrag(e, i) }));
   const elixirFill = h('div', { class: 'elixir-fill' });
   const elixirCount = h('span', { class: 'count' }, '5');
+  const emoteBtn = h(
+    'button',
+    { class: 'emote-btn', title: 'Emotes', onpointerdown: (e) => e.stopPropagation(), onclick: (e) => (e.stopPropagation(), toggleEmotes()) },
+    icon('emote'),
+  );
   const deckBar = h(
     'div',
     { class: 'hand wood panel' },
-    h('div', { class: 'hand-cards' }, cardEls, h('div', { class: 'next-card' }, nextSlot, 'Next')),
+    h('div', { class: 'hand-cards' }, h('div', { class: 'emote-col' }, emoteBtn), cardEls, h('div', { class: 'next-card' }, nextSlot, 'Next')),
     h(
       'div',
       { class: 'elixir-bar' },
@@ -91,6 +98,62 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
     mediaBox(),
   );
 
+  // ---------------------------------------------------------------- emotes
+  let emotePop = null;
+  let lastEmoteAt = -Infinity;
+  const bubbles = { me: null, opp: null };
+  const closeEmotes = () => {
+    emotePop?.remove();
+    emotePop = null;
+  };
+  function toggleEmotes() {
+    sfx.click();
+    if (emotePop) return closeEmotes();
+    closePop();
+    emotePop = h(
+      'div',
+      { class: 'emote-picker wood panel', onpointerdown: (e) => e.stopPropagation() },
+      EMOTES.map((em) => h('button', { class: 'emote-tile', title: em.name, onclick: () => sendEmote(em.id) }, img(emoteImg(em.id), '', em.name))),
+    );
+    deckBar.append(emotePop);
+  }
+  function sendEmote(id) {
+    closeEmotes();
+    const now = performance.now();
+    if (now - lastEmoteAt < EMOTE_COOLDOWN_MS) return toast('Wait a moment...', true);
+    lastEmoteAt = now;
+    showEmote(id, 'me');
+    session.emote?.(id);
+  }
+  /** Pops the emote up above the sender's King Tower; a new one replaces the old. */
+  function showEmote(id, side) {
+    if (!EMOTE_IDS.has(id)) return;
+    bubbles[side]?.el.remove();
+    const el = h('div', { class: `emote-bubble ${side}` }, img(emoteImg(id)));
+    root.append(el);
+    bubbles[side] = { el, until: performance.now() + EMOTE_SHOW_MS };
+    placeBubbles();
+    if (side === 'me') sfx.open();
+    else sfx.chat();
+  }
+  function placeBubbles() {
+    const a = app();
+    const scale = a.getBoundingClientRect().width / a.offsetWidth || 1;
+    for (const side of ['me', 'opp']) {
+      const b = bubbles[side];
+      if (!b) continue;
+      if (performance.now() > b.until) {
+        b.el.remove();
+        bubbles[side] = null;
+        continue;
+      }
+      const p = engine.tileToScreen(9, side === 'me' ? 3 : 29, 7.2);
+      b.el.style.left = `${p.x / scale}px`;
+      b.el.style.top = `${p.y / scale}px`;
+    }
+  }
+  session.onEmote = (id) => showEmote(id, 'opp');
+
   function confirmMenu() {
     if (session.view()?.over) return onMenu();
     const box = h(
@@ -116,6 +179,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
   let handKey = '';
   let lastText = '';
   function tick() {
+    placeBubbles();
     const v = session.view();
     if (!v) return;
     last = v;
@@ -218,6 +282,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
 
   function onCanvasDown(e) {
     closePop();
+    closeEmotes();
     if (selected == null || !last || last.over) return;
     if (tryDeploy(selected, e.clientX, e.clientY)) {
       selected = null;

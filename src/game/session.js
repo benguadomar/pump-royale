@@ -2,6 +2,7 @@ import { BattleSim, randomDeck } from '../sim/sim.js';
 import { BattleAI } from '../sim/ai.js';
 import { decodeSnapshot } from '../sim/snapshot.js';
 import { ELIXIR_PER_SEC, MAX_ELIXIR } from '../sim/constants.js';
+import { EMOTE_COOLDOWN_MS } from '../data/emotes.js';
 import { net } from '../net.js';
 
 const AI_NAMES = ['Sir Bot-a-Lot', 'Grumblebeard', 'Lady Elixira', 'Count Crumble', 'Old Tusk'];
@@ -15,10 +16,24 @@ export class LocalSession {
     this.sim = new BattleSim([deck, randomDeck()]);
     const ai = new BattleAI(this.sim, 1);
     this.sim.onStep = (dt) => ai.update(dt);
+    this.onEmote = null;
+    this.aiEmoteAt = 0;
   }
 
   update(dt) {
     this.sim.advance(dt);
+  }
+
+  /** The AI sometimes answers an emote, and reacts to towers falling. */
+  emote() {
+    if (Math.random() < 0.45) this.aiEmote(['laugh', 'thumbs', 'question', 'peace'], 900 + Math.random() * 900);
+  }
+
+  aiEmote(choices, delay = 600) {
+    const now = performance.now();
+    if (now - this.aiEmoteAt < EMOTE_COOLDOWN_MS) return;
+    this.aiEmoteAt = now + delay;
+    setTimeout(() => this.onEmote?.(choices[Math.floor(Math.random() * choices.length)]), delay);
   }
 
   view() {
@@ -36,7 +51,13 @@ export class LocalSession {
   }
 
   drainEvents() {
-    return this.sim.drainEvents();
+    const events = this.sim.drainEvents();
+    for (const ev of events) {
+      if (ev.e !== 'tower' || Math.random() > 0.6) continue;
+      // `team` is the side that lost the tower; team 1 is the AI.
+      this.aiEmote(ev.team === 1 ? ['cry', 'angry'] : ['laugh', 'thumbs'], 700);
+    }
+    return events;
   }
 
   /** Returns null on success or a reason string. */
@@ -70,7 +91,9 @@ export class OnlineSession {
     this.events = [];
     this.finalResult = null;
     this.onPlayError = null;
+    this.onEmote = null;
     this.offs = [
+      net.on('emote', (m) => this.onEmote?.(m.id)),
       net.on('snap', (s) => this.onSnap(s)),
       net.on('play-fail', (m) => this.onPlayError?.(m.reason)),
       net.on('match-end', (m) => (this.finalResult = m.result)),
@@ -132,6 +155,10 @@ export class OnlineSession {
 
   forfeit() {
     net.send({ t: 'forfeit', room: this.room });
+  }
+
+  emote(id) {
+    net.send({ t: 'emote', room: this.room, id });
   }
 
   result() {

@@ -192,6 +192,9 @@ wss.on('connection', (ws) => {
       case 'forfeit':
         room?.forfeit(ws);
         return;
+      case 'emote':
+        room?.emote(ws, msg.id);
+        return;
       case 'gchat': {
         const text = cleanText(msg.text);
         const now = Date.now();

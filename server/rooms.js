@@ -2,6 +2,7 @@ import { BattleSim } from '../src/sim/sim.js';
 import { encodeSnapshot } from '../src/sim/snapshot.js';
 import { SIM_DT, ARENA_W, ARENA_H, mirrorX, mirrorY } from '../src/sim/constants.js';
 import { CARD_BY_ID } from '../src/data/cards.js';
+import { EMOTE_IDS, EMOTE_COOLDOWN_MS } from '../src/data/emotes.js';
 
 const SNAPSHOT_EVERY = 2; // ticks -> 15 Hz at a 30 Hz simulation
 const RECONNECT_GRACE_MS = 12000;
@@ -26,6 +27,7 @@ class Room {
     this.ended = false;
     this.started = false;
     this.disconnectTimers = [null, null];
+    this.lastEmote = [0, 0];
 
     players.forEach((p, team) => {
       const opp = players[1 - team];
@@ -87,6 +89,16 @@ class Room {
     const p = this.players[team];
     const entry = { name: p.name, country: p.country, text: text.slice(0, MAX_GAME_CHAT), ts: Date.now() };
     for (const t of [0, 1]) this.send(t, { t: 'gchat', room: this.id, msg: entry });
+  }
+
+  /** Relays a whitelisted emote to the opponent (the sender shows its own locally). */
+  emote(ws, id) {
+    const team = this.teamOf(ws);
+    if (team < 0 || this.ended || !EMOTE_IDS.has(id)) return;
+    const now = Date.now();
+    if (now - (this.lastEmote[team] ?? 0) < EMOTE_COOLDOWN_MS) return;
+    this.lastEmote[team] = now;
+    this.send(1 - team, { t: 'emote', id });
   }
 
   forfeit(ws) {

@@ -1,16 +1,36 @@
 import * as THREE from 'three/webgpu';
-import { pass } from 'three/tsl';
+import { pass, vec4, mix, float, renderOutput } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import { ao } from 'three/addons/tsl/display/GTAONode.js';
+import { smaa } from 'three/addons/tsl/display/SMAANode.js';
+import * as t3 from '@typegpu/three';
+import { d, std } from 'typegpu';
 import { ARENA_W, ARENA_H } from '../sim/constants.js';
-import { skyColor } from './shaders.js';
+import { skyColor, envSkyColor } from './shaders.js';
 import { buildWorld } from './world.js';
 import { Fx } from './fx.js';
 import { state } from '../state.js';
 
 export const tileToWorld = (x, y, h = 0) => new THREE.Vector3(x - ARENA_W / 2, h, ARENA_H / 2 - y);
 
+/** Filmic grade in linear space: gentle S-curve, a touch more saturation, warm highlights, vignette. */
+function colorGrade(input) {
+  return t3.toTSL(() => {
+    'use gpu';
+    const c = input.$;
+    const luma = std.dot(c, d.vec3f(0.2126, 0.7152, 0.0722));
+    let g = std.mix(d.vec3f(luma), c, 1.12);
+    g = g * std.mix(d.vec3f(0.98, 0.99, 1.03), d.vec3f(1.04, 1.0, 0.95), std.smoothstep(0.1, 0.9, luma));
+    const uv = t3.screenUV.$ - d.vec2f(0.5);
+    const vig = 1 - std.smoothstep(0.35, 0.95, std.length(uv * d.vec2f(1.1, 1.25))) * 0.32;
+    return std.max(g, d.vec3f(0)) * vig;
+  });
+}
+
 const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
-const BATTLE_ELEVATION = THREE.MathUtils.degToRad(72);
+/** Battle camera: behind the player's side, tilted ~50° down, moderate perspective. */
+const BATTLE_ELEVATION = THREE.MathUtils.degToRad(50);
+const BATTLE_FOV = 46;
 
 /**
  * Owns the WebGPU renderer (WebGL2 fallback), the diorama scene and the camera rig.
@@ -20,8 +40,23 @@ export class Engine {
   static async create(canvas) {
     const engine = new Engine(canvas);
     await engine.renderer.init();
+    engine.buildEnvironment();
     engine.applyGraphics();
     return engine;
+  }
+
+  /** Bakes the outdoor sky into a prefiltered env map: soft sky fill + reflections on metal/water. */
+  buildEnvironment() {
+    const envScene = new THREE.Scene();
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(50, 48, 24), new THREE.MeshBasicNodeMaterial({ side: THREE.BackSide }));
+    dome.material.colorNode = envSkyColor;
+    envScene.add(dome);
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(envScene, 0.02).texture;
+    this.scene.environmentIntensity = 0.55;
+    pmrem.dispose();
+    dome.geometry.dispose();
+    dome.material.dispose();
   }
 
   constructor(canvas) {
@@ -37,7 +72,7 @@ export class Engine {
     this.renderer = new THREE.WebGPURenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.NeutralToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 0.92;
 
     this.scene = new THREE.Scene();
     this.scene.backgroundNode = skyColor;
@@ -51,11 +86,25 @@ export class Engine {
     this.world = buildWorld(this);
     this.fx = new Fx(this);
 
-    const scenePass = pass(this.scene, this.camera);
+    // HIGH graphics: scene -> ambient occlusion -> bloom -> colour grade + vignette -> SMAA.
+    // GTAO cannot sample a multisampled depth buffer, so the pass renders without MSAA and
+    // edges are smoothed by SMAA after tone mapping instead.
+    const scenePass = pass(this.scene, this.camera, { samples: 0 });
     const color = scenePass.getTextureNode('output');
-    this.bloomNode = bloom(color, 0.45, 0.25, 0.82);
+    const depth = scenePass.getTextureNode('depth');
+    this.aoNode = ao(depth, null, this.camera);
+    this.aoNode.resolutionScale = 0.5;
+    this.aoNode.radius.value = 0.9;
+    this.aoNode.thickness.value = 1.2;
+    this.aoNode.scale.value = 1.15;
+    this.aoNode.samples.value = 12;
+    const occlusion = mix(float(1), this.aoNode.getTextureNode().r, 0.9);
+    const lit = color.rgb.mul(occlusion);
+    this.bloomNode = bloom(color, 0.4, 0.3, 0.85);
+    const graded = colorGrade(t3.fromTSL(lit.add(this.bloomNode.rgb), d.vec3f));
     this.pipeline = new THREE.RenderPipeline(this.renderer);
-    this.pipeline.outputNode = color.add(this.bloomNode);
+    this.pipeline.outputColorTransform = false;
+    this.pipeline.outputNode = smaa(renderOutput(vec4(graded, 1)));
 
     this.timer = new THREE.Timer();
     window.addEventListener('resize', () => this.resize());
@@ -160,13 +209,18 @@ export class Engine {
     const { top = 0, bottom = 0 } = this.insets;
     const cam = this.camera.clone();
     cam.clearViewOffset();
-    cam.fov = 34;
+    cam.fov = BATTLE_FOV;
     cam.aspect = w / h;
-    const hx = ARENA_W / 2 + 0.4;
+    // Fit the playable field; the decorative outer walls may tuck under side HUD panels.
+    const hx = ARENA_W / 2;
     const hz = ARENA_H / 2 + 0.4;
+    const kingZ = ARENA_H / 2 - 3;
+    const princessZ = ARENA_H / 2 - 6.5;
+    // Field corners (with the wall tops), plus every tower's health plate at both ends.
     const pts = [
-      [-hx, 0, hz], [hx, 0, hz], [-hx, 0, -hz], [hx, 0, -hz],
-      [0, 6.8, -(ARENA_H / 2 - 3)], [-5.5, 6.1, -(ARENA_H / 2 - 6.5)], [5.5, 6.1, -(ARENA_H / 2 - 6.5)],
+      [-hx, 1.2, hz], [hx, 1.2, hz], [-hx, 0, -hz], [hx, 0, -hz],
+      [0, 6.8, -kingZ], [-5.5, 6.1, -princessZ], [5.5, 6.1, -princessZ],
+      [0, 6.8, kingZ], [-5.5, 6.1, princessZ], [5.5, 6.1, princessZ],
     ].map(([x, y, z]) => new THREE.Vector3(x, y, z));
     const v = new THREE.Vector3();
     const availH = Math.max(80, h - top - bottom);
@@ -190,7 +244,7 @@ export class Engine {
       if (((maxY - minY) / 2) * h <= availH && maxX * (w / 2) <= w / 2 - (this.insets.side ?? 12)) break;
     }
     const centerPx = ((1 - (maxY + minY) / 2) / 2) * h;
-    return { pos: cam.position.clone(), look: new THREE.Vector3(0, 0, 0), offset: centerPx - (top + availH / 2), fov: 34 };
+    return { pos: cam.position.clone(), look: new THREE.Vector3(0, 0, 0), offset: centerPx - (top + availH / 2), fov: BATTLE_FOV };
   }
 
   applyPose(p, w, h) {
@@ -202,6 +256,12 @@ export class Engine {
     cam.lookAt(p.look);
     if (Math.abs(p.offset) > 0.5) cam.setViewOffset(w, h, 0, p.offset, w, h);
     else cam.clearViewOffset();
+  }
+
+  /** Screen position (client px) of arena tile (x, y) at height h, through the live camera. */
+  tileToScreen(x, y, h = 0) {
+    const v = tileToWorld(x, y, h).project(this.camera);
+    return { x: ((v.x + 1) / 2) * window.innerWidth, y: ((1 - v.y) / 2) * window.innerHeight };
   }
 
   /** Converts a screen position into arena tile coordinates (or null if it misses the ground). */
@@ -253,13 +313,15 @@ export class Engine {
   }
 
   buildLights() {
-    this.scene.add(new THREE.HemisphereLight(0xdcefff, 0x6a7d4a, 1.35));
-    const sun = new THREE.DirectionalLight(0xfff0d8, 2.6);
+    // Sky fill now mostly comes from the env map, so the hemisphere light is just a tint.
+    this.scene.add(new THREE.HemisphereLight(0xdcefff, 0x6a7d4a, 0.75));
+    const sun = new THREE.DirectionalLight(0xffecd0, 3.0);
     sun.position.set(-22, 46, 18);
-    sun.shadow.mapSize.set(2048, 2048);
-    Object.assign(sun.shadow.camera, { left: -34, right: 34, top: 34, bottom: -34, near: 1, far: 120 });
-    sun.shadow.bias = -0.0006;
-    sun.shadow.normalBias = 0.02;
+    sun.shadow.mapSize.set(4096, 4096);
+    Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30, near: 1, far: 120 });
+    sun.shadow.bias = -0.0005;
+    sun.shadow.normalBias = 0.03;
+    sun.shadow.radius = 3;
     this.scene.add(sun);
     this.sun = sun;
   }
