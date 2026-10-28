@@ -11,6 +11,11 @@ const F_LUNGE = 8;
 const F_ACTIVE = 16;
 const F_DEAD = 32;
 const F_KING = 64;
+const F_FROZEN = 128;
+const F_STUNNED = 256;
+const F_RAGED = 512;
+const F_HIDDEN = 1024;
+const F_CHARGING = 2048;
 
 const POINT_KEYS = [['x', 'y'], ['fx', 'fy'], ['tx', 'ty']];
 
@@ -43,6 +48,11 @@ export function encodeSnapshot(sim, team, events = []) {
     if (e.active) flags |= F_ACTIVE;
     if (e.dead) flags |= F_DEAD;
     if (e.towerKind === 'king') flags |= F_KING;
+    if (e.frozen > 0) flags |= F_FROZEN;
+    if (e.stunned > 0) flags |= F_STUNNED;
+    if (e.raged > 0) flags |= F_RAGED;
+    if (e.hidden) flags |= F_HIDDEN;
+    if (e.charging) flags |= F_CHARGING;
     ents.push([
       e.id,
       KIND_CODE[e.kind],
@@ -51,7 +61,7 @@ export function encodeSnapshot(sim, team, events = []) {
       Math.round((flip ? mirrorX(e.x) : e.x) * 100),
       Math.round((flip ? mirrorY(e.y) : e.y) * 100),
       Math.ceil(e.hp),
-      e.maxHp,
+      Math.round(e.maxHp),
       flags,
       Math.round((e.deploy > 0 ? e.deploy : 0) * 100),
     ]);
@@ -94,6 +104,11 @@ export function decodeSnapshot(s) {
       lunge: Boolean(f & F_LUNGE),
       active: Boolean(f & F_ACTIVE),
       dead: Boolean(f & F_DEAD),
+      frozen: Boolean(f & F_FROZEN),
+      stunned: Boolean(f & F_STUNNED),
+      raged: Boolean(f & F_RAGED),
+      hidden: Boolean(f & F_HIDDEN),
+      charging: Boolean(f & F_CHARGING),
     })),
   };
 }

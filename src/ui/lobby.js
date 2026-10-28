@@ -6,7 +6,8 @@ import { openModal } from './modal.js';
 import { pingPill, leaderboardPanel, mediaBox, settingsBody, flag, toastMsg } from './widgets.js';
 import { sfx } from '../audio.js';
 import { net } from '../net.js';
-import { state, save } from '../state.js';
+import { state, save, currentArena } from '../state.js';
+import { ARENAS } from '../data/arenas.js';
 
 const X_URL = 'https://x.com/';
 const MAX_FEED = 9;
@@ -166,6 +167,43 @@ export function createLobby({ engine, chat, onPlay, onOnline }) {
   const menuBtn = (cls, src, label, onclick, title) =>
     h('button', { class: `btn ${cls}`, title, onclick: () => (sfx.click(), closePop(), onclick()) }, src && img(src), label);
 
+  // Arena picker: unlocked arenas can be chosen; locked ones show the trophies needed.
+  const arenaLabel = h('span', {}, currentArena().name);
+  const arenaChip = h('button', { class: 'arena-chip', title: 'Choose arena', onclick: () => (sfx.click(), closePop(), openArenas()) }, img('/assets/ui/icon-trophy.png'), arenaLabel);
+  function openArenas() {
+    const active = currentArena().id;
+    const close = openModal({
+      cls: 'arena-modal',
+      title: 'ARENAS',
+      iconSrc: '/assets/ui/icon-trophy.png',
+      body: h(
+        'div',
+        { class: 'arena-list' },
+        ARENAS.map((a) => {
+          const locked = state.trophies < a.trophies;
+          const swatch = h('div', { class: 'arena-swatch', style: { background: `linear-gradient(180deg, #${a.sky[0].toString(16).padStart(6, '0')}, #${a.grass[0].toString(16).padStart(6, '0')} 70%, #${a.path.toString(16).padStart(6, '0')})` } });
+          return h(
+            'button',
+            {
+              class: `arena-row inset${locked ? ' locked' : ''}${a.id === active ? ' active' : ''}`,
+              disabled: locked,
+              onclick: () => {
+                sfx.click();
+                state.arena = a.id;
+                save();
+                engine.setArena(a);
+                arenaLabel.textContent = a.name;
+                close();
+              },
+            },
+            swatch,
+            h('div', { class: 'arena-info' }, h('b', {}, a.name), h('span', {}, locked ? `🔒 Unlocks at ${a.trophies} trophies` : a.id === active ? 'Selected' : 'Tap to fight here')),
+          );
+        }),
+      ),
+    });
+  }
+
   const ping = pingPill();
   const feedEl = feed();
   const ticker = liveTicker();
@@ -183,6 +221,7 @@ export function createLobby({ engine, chat, onPlay, onOnline }) {
     h(
       'div',
       { class: 'menu-bar' },
+      arenaChip,
       menuBtn('', '/assets/ui/icon-cards.png', 'CARDS', openCards),
       menuBtn('gold play', '/assets/ui/icon-play.png', 'PLAY', onPlay, 'Battle the AI'),
       menuBtn('', '/assets/ui/icon-deck.png', 'DECK', openDeck),

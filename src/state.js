@@ -1,4 +1,5 @@
 import { CARD_BY_ID, DEFAULT_DECK } from './data/cards.js';
+import { ARENA_BY_ID, arenaFor } from './data/arenas.js';
 
 const KEY = 'pump-royale:v1';
 const MAX_HISTORY = 20;
@@ -34,6 +35,8 @@ export const state = {
   settings: { volume: 0.25, music: 0.35, muted: false, graphics: 'high', ...saved.settings },
   stats: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, ...saved.stats },
   history: Array.isArray(saved.history) ? saved.history : [],
+  trophies: Number.isFinite(saved.trophies) ? saved.trophies : 0,
+  arena: typeof saved.arena === 'string' ? saved.arena : null,
 };
 
 const listeners = new Set();
@@ -43,8 +46,8 @@ export function onStateChange(fn) {
 }
 
 export function save() {
-  const { id, name, nameLocked, deck, settings, stats, history, wallet } = state;
-  localStorage.setItem(KEY, JSON.stringify({ id, name, nameLocked, deck, settings, stats, history, wallet }));
+  const { id, name, nameLocked, deck, settings, stats, history, wallet, trophies, arena } = state;
+  localStorage.setItem(KEY, JSON.stringify({ id, name, nameLocked, deck, settings, stats, history, wallet, trophies, arena }));
   for (const fn of listeners) fn(state);
 }
 
@@ -73,4 +76,13 @@ export function recordMatch({ result, myCrowns, enemyCrowns, opponent = 'AI', mo
   state.history.unshift({ result, myCrowns, enemyCrowns, opponent, mode, ts: Date.now() });
   state.history.length = Math.min(state.history.length, MAX_HISTORY);
   save();
+}
+
+/** Arena to fight in: `?arena=` preview override, else the chosen unlocked arena, else the highest unlocked. */
+export function currentArena() {
+  const preview = ARENA_BY_ID[new URLSearchParams(location.search).get('arena')];
+  if (preview) return preview;
+  const chosen = ARENA_BY_ID[state.arena];
+  if (chosen && state.trophies >= chosen.trophies) return chosen;
+  return arenaFor(state.trophies);
 }

@@ -254,7 +254,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
       toast(PLAY_ERRORS.elixir, true);
       return false;
     }
-    if (!view.canDeploy(tile.x, tile.y)) {
+    if (!view.canDeploy(tile.x, tile.y, card.id)) {
       toast(PLAY_ERRORS.zone, true);
       return false;
     }
@@ -269,7 +269,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
     if (!last || last.over) return;
     e.preventDefault();
     drag = { i, id: last.me.hand[i], x0: e.clientX, y0: e.clientY, moved: false, ghost: null };
-    view.showZones();
+    view.showZones(drag.id);
     window.addEventListener('pointermove', onDragMove);
     window.addEventListener('pointerup', onDragEnd, { once: true });
   }
@@ -332,7 +332,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
     if (n >= 1 && n <= 4) {
       selected = selected === n - 1 ? null : n - 1;
       if (selected == null) view.hideZones();
-      else view.showZones();
+      else view.showZones(last?.me.hand[selected]);
     }
     if (e.key === 'Escape') {
       selected = null;

@@ -3,7 +3,14 @@ import { state } from './state.js';
 // CC0 clips from github.com/7etsuo/anvil (Kenney UI audio, CC0 RPG/combat packs,
 // "Battle Theme A" and "Town Theme" by cynicmusic) - see public/assets/audio/CREDITS.md.
 const CLIPS = ['bell', 'chime', 'click', 'drop', 'explosion', 'falling', 'fireball', 'gong', 'hit1', 'hit2', 'magic', 'swing1', 'swing2', 'swing3'];
-const MUSIC = { lobby: '/assets/audio/music-lobby.mp3', battle: '/assets/audio/music-battle.mp3' };
+const MUSIC = {
+  lobby: '/assets/audio/music-lobby.mp3',
+  battle: '/assets/audio/music-battle.mp3',
+  'bone-pit': '/assets/audio/music-bone-pit.mp3',
+  'barbarian-bowl': '/assets/audio/music-barbarian-bowl.mp3',
+  'frozen-peak': '/assets/audio/music-frozen-peak.mp3',
+  'pump-palace': '/assets/audio/music-pump-palace.mp3',
+};
 const MIN_GAP_MS = 45;
 
 let ctx = null;
@@ -136,6 +143,35 @@ export const sfx = {
   cardReady: () => tone({ freq: 1200, to: 1500, dur: 0.06, type: 'sine', gain: 0.04 }),
   select: () => clip('click', { gain: 0.6, rate: 1.25, jitter: 0.02 }),
   drain: () => tone({ freq: 660, to: 330, dur: 0.14, type: 'triangle', gain: 0.06 }),
+  musket: () => {
+    clip('explosion', { gain: 0.3, rate: 2.4 });
+    clip('hit1', { gain: 0.2, rate: 1.8 });
+  },
+  spellCast: () => clip('magic', { gain: 0.35, rate: 1.3 }),
+  arrows: () => [0, 0.06, 0.12, 0.2, 0.27].forEach((d) => clip(pick('swing2', 'swing3'), { gain: 0.3, rate: 1.9 + Math.random() * 0.4, delay: d })),
+  zap: () => {
+    tone({ freq: 1800, to: 200, dur: 0.25, type: 'sawtooth', gain: 0.12 });
+    clip('explosion', { gain: 0.3, rate: 2.2 });
+  },
+  freeze: () => {
+    clip('magic', { gain: 0.6, rate: 1.6 });
+    tone({ freq: 2400, to: 1600, dur: 0.6, type: 'sine', gain: 0.08 });
+  },
+  rage: () => {
+    clip('magic', { gain: 0.6, rate: 0.7 });
+    tone({ freq: 110, to: 220, dur: 0.5, type: 'sawtooth', gain: 0.08 });
+  },
+  barrel: () => {
+    clip('drop', { gain: 0.7, rate: 0.6 });
+    clip(pick('hit1', 'hit2'), { gain: 0.5, rate: 0.8 });
+  },
+  teslaZap: () => tone({ freq: 2600, to: 900, dur: 0.12, type: 'square', gain: 0.05 }),
+  beam: (stage) => tone({ freq: 180 + stage * 140, to: 160 + stage * 160, dur: 0.38, type: 'sawtooth', gain: 0.025 + stage * 0.015 }),
+  reveal: (up) => tone({ freq: up ? 220 : 520, to: up ? 520 : 200, dur: 0.35, type: 'triangle', gain: 0.08 }),
+  charge: () => {
+    clip('gong', { gain: 0.25, rate: 1.6 });
+    tone({ freq: 300, to: 600, dur: 0.4, type: 'triangle', gain: 0.08 });
+  },
   win: () => {
     clip('magic', { gain: 0.7 });
     [523, 659, 784, 1046].forEach((f, i) => tone({ freq: f, dur: 0.28, type: 'triangle', gain: 0.18, delay: i * 0.12 }));

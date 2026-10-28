@@ -774,6 +774,22 @@ button {
 .card-tile:hover {
   transform: translateY(-2px);
 }
+/* Rarity frames */
+.card-tile.rarity-common {
+  border-color: rgba(170, 190, 210, 0.85);
+}
+.card-tile.rarity-rare {
+  border-color: #f0a43a;
+  background: linear-gradient(180deg, rgba(255, 170, 60, 0.16), rgba(0, 0, 0, 0.12));
+}
+.card-tile.rarity-epic {
+  border-color: #c06af0;
+  background: linear-gradient(180deg, rgba(180, 85, 232, 0.2), rgba(0, 0, 0, 0.12));
+}
+.card-tile.rarity-legendary {
+  border-color: #52e3d9;
+  background: linear-gradient(180deg, rgba(82, 227, 217, 0.18), rgba(0, 0, 0, 0.12));
+}
 .card-tile.selected {
   border-color: var(--gold-1);
   box-shadow: 0 0 0 2px var(--gold-2), 0 0 16px rgba(255, 210, 90, 0.55);
@@ -1982,6 +1998,78 @@ button {
 }
 .lb-tabs .btn img {
   height: 18px;
+}
+
+/* ---------------------------------------------------------------- arenas */
+
+.arena-chip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 4px 6px;
+  border-radius: 14px;
+  font-family: var(--font-title);
+  font-size: 13px;
+  color: #fff3d6;
+  cursor: pointer;
+  pointer-events: auto;
+  background: linear-gradient(180deg, #6b3f1f, #4a2a12);
+  border: 2px solid #2a160a;
+  box-shadow: inset 0 1px 0 rgba(255, 220, 170, 0.3), 0 3px 0 #1d0e05;
+  white-space: nowrap;
+}
+.arena-chip img {
+  height: 20px;
+}
+.arena-modal {
+  width: 520px;
+}
+.arena-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.arena-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border-radius: 10px;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  border: 2px solid transparent;
+}
+.arena-row.active {
+  border-color: var(--gold-1);
+}
+.arena-row.locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.arena-swatch {
+  width: 86px;
+  height: 52px;
+  border-radius: 8px;
+  border: 2px solid rgba(0, 0, 0, 0.4);
+  flex: none;
+}
+.arena-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.arena-info b {
+  font-family: var(--font-title);
+  font-size: 18px;
+}
+.arena-info span {
+  font-size: 12px;
+  color: var(--text-dim);
 }
 
 /* ---------------------------------------------------------------- battle juice */

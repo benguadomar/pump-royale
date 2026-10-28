@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "concurrently -k -n server,web -c yellow,cyan \"node --watch server/index.js\" \"vite\"",
     "build": "vite build",
-    "start": "NODE_ENV=production node server/index.js"
+    "start": "NODE_ENV=production node server/index.js",
+    "test": "node tests/mechanics.mjs && node tests/balance.mjs 200"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",

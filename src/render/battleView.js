@@ -1,13 +1,15 @@
 import * as THREE from 'three/webgpu';
 import { ARENA_W, ARENA_H, zoneAllows } from '../sim/constants.js';
-import { CARD_BY_ID, SPEEDS, TOWERS } from '../data/cards.js';
-import { buildUnit, makeTowerObject, Animator, ghostify, flashMat } from './models.js';
+import { CARD_BY_ID, SPEEDS, TOWERS, isSpell } from '../data/cards.js';
+import { buildUnit, makeTowerObject, Animator, ghostify, flashMat, frozenMat, rageMat } from './models.js';
 import { tileToWorld } from './engine.js';
 import { sfx } from '../audio.js';
 
 const TEAM_COLOR = [0x3d8ff0, 0xe2463c];
 const TEAM_RGB = [[0.45, 0.75, 1], [1, 0.45, 0.4]];
-const PROJECTILE_ARC = { arrow: 0.6, bomb: 2.4, fireball: 0.9, cannonball: 0.5 };
+const PROJECTILE_ARC = { arrow: 0.6, bomb: 2.4, fireball: 0.9, cannonball: 0.5, bullet: 0.05, bolt: 0.15, dragonfire: 0.3, spellFireball: 4, spellArrows: 5, spellBarrel: 5 };
+const PROJECTILE_SIZE = { bomb: 0.28, cannonball: 0.26, fireball: 0.38, bullet: 0.07, bolt: 0.13, dragonfire: 0.22, spellFireball: 0.75, spellBarrel: 0.45 };
+const BEAM_COLOR = { tesla: 0x9ff6ff, inferno: [0xff9a2a, 0xff4d14, 0xfff1c0] };
 const TOWER_LEVEL = 11;
 const DEATH_TIME = 0.5;
 const HIT_STOP = 0.065;
@@ -43,7 +45,12 @@ export class BattleView {
       chunk: new THREE.BoxGeometry(1, 1, 1),
       bone: new THREE.CapsuleGeometry(0.035, 0.22, 3, 6),
       crack: new THREE.BoxGeometry(1, 1, 1),
+      beam: new THREE.CylinderGeometry(1, 1, 1, 6, 1, true).translate(0, 0.5, 0).rotateX(Math.PI / 2),
+      barrel: new THREE.CylinderGeometry(0.4, 0.4, 0.8, 10),
+      zone: new THREE.CircleGeometry(1, 40).rotateX(-Math.PI / 2),
     };
+    this.beams = new Map();
+    this.zones = [];
     this.debris = [];
     this.numLayer = document.createElement('div');
     this.numLayer.className = 'dmg-layer';
@@ -59,6 +66,15 @@ export class BattleView {
       bomb: new THREE.MeshStandardMaterial({ color: 0x1d1d1f, roughness: 0.4 }),
       cannonball: new THREE.MeshStandardMaterial({ color: 0x33363c, roughness: 0.35, metalness: 0.5 }),
       fireball: new THREE.MeshBasicMaterial({ color: 0xffb14a }),
+      spellFireball: new THREE.MeshBasicMaterial({ color: 0xff8a2a }),
+      dragonfire: new THREE.MeshBasicMaterial({ color: 0xff9c3a }),
+      bullet: new THREE.MeshBasicMaterial({ color: 0x2a2a2e }),
+      bolt: new THREE.MeshBasicMaterial({ color: 0x7fb8ff }),
+      spellBarrel: new THREE.MeshStandardMaterial({ color: 0x8a5a33, roughness: 0.8 }),
+      beam: { tesla: new THREE.MeshBasicMaterial({ color: BEAM_COLOR.tesla, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending }), inferno: BEAM_COLOR.inferno.map((c) => new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending })) },
+      freezeZone: new THREE.MeshBasicMaterial({ color: 0xbfeaff, transparent: true, opacity: 0.35, depthWrite: false }),
+      rageZone: new THREE.MeshBasicMaterial({ color: 0xc040ff, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending }),
+      spellRing: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false }),
       rubble: new THREE.MeshStandardMaterial({ color: 0x6f7178, roughness: 1, flatShading: true }),
       stone: [0xcdbf9f, 0x9a9ca3, 0xa39578].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.95, flatShading: true })),
       bone: new THREE.MeshStandardMaterial({ color: 0xefebe1, roughness: 0.7 }),
@@ -207,10 +223,14 @@ export class BattleView {
     };
   }
 
+  /** Material override by priority: hit flash, then frozen, then enraged. */
   setFlash(v, on) {
-    if (v.flashOn === on) return;
-    v.flashOn = on;
-    for (const m of v.meshes) m.material = on ? flashMat : m.userData.baseMat;
+    const e = v.last;
+    const mode = on ? 'flash' : e?.frozen ? 'frozen' : e?.raged ? 'rage' : null;
+    if (v.tint === mode) return;
+    v.tint = mode;
+    const mat = mode === 'flash' ? flashMat : mode === 'frozen' ? frozenMat : mode === 'rage' ? rageMat : null;
+    for (const m of v.meshes) m.material = mat ?? m.userData.baseMat;
   }
 
   /** Turns toward the current target while fighting, otherwise along the direction of travel. */
@@ -265,6 +285,29 @@ export class BattleView {
     }
     this.updateProjectiles(dt);
     this.updateDebris(dt);
+    this.updateBeams(dt);
+    this.updateZones(dt);
+  }
+
+  /** Stun stars, rage sparkles and the Prince's charge dust. */
+  statusFx(v, e, pos, dt) {
+    v.statusT = (v.statusT ?? 0) - dt;
+    if (v.statusT > 0) return;
+    const top = v.model.height + 0.15;
+    if (e.stunned) {
+      v.statusT = 0.12;
+      const a = Math.random() * Math.PI * 2;
+      this.fx.spawn('spark', { x: pos.x + Math.cos(a) * 0.35, y: top, z: pos.z + Math.sin(a) * 0.35 }, { size: 0.16, life: 0.3, vel: [0, 0.3, 0], tint: [1, 0.95, 0.4] });
+    } else if (e.frozen) {
+      v.statusT = 0.2;
+      this.fx.spawn('glow', { x: pos.x + (Math.random() - 0.5) * 0.6, y: top * Math.random(), z: pos.z + (Math.random() - 0.5) * 0.6 }, { size: 0.3, life: 0.5, tint: [0.7, 0.9, 1] });
+    } else if (e.raged) {
+      v.statusT = 0.15;
+      this.fx.spawn('glow', { x: pos.x + (Math.random() - 0.5) * 0.7, y: 0.2 + Math.random() * top, z: pos.z + (Math.random() - 0.5) * 0.7 }, { size: 0.35, life: 0.45, vel: [0, 1.2, 0], tint: [0.85, 0.35, 1] });
+    } else if (e.charging) {
+      v.statusT = 0.05;
+      this.fx.spawn('smoke', { x: pos.x, y: 0.15, z: pos.z }, { size: 0.5, life: 0.6, vel: [0, 0.4, 0], grow: 0.6, tint: [0.85, 0.75, 0.6] });
+    } else v.statusT = 0.25;
   }
 
   /** First frame of a unit's death: last damage number, per-card death flavour. */
@@ -302,7 +345,7 @@ export class BattleView {
     const asleep = v.towerKind === 'king' && !e.active;
     if (!v.anim.engaged) v.aim = null;
     this.steer(v, v.crew.root, v.obj.position, 0, 0, dt);
-    v.anim.update(dt, t, { asleep });
+    v.anim.update(dt, t, { asleep, frozen: !!(e.frozen || e.stunned) });
   }
 
   updateUnit(v, e, dt, t) {
@@ -320,8 +363,11 @@ export class BattleView {
     v.obj.position.copy(pos);
     if (!v.anim.engaged) v.aim = null;
     this.steer(v, v.model.root, pos, dx, dz, dt);
-    v.anim.update(dt, t, { moving: e.moving, speed: SPEEDS[v.card.speed] ?? 0, deploy: e.deploy });
+    v.sinkK = THREE.MathUtils.damp(v.sinkK ?? (e.hidden ? 1 : 0), e.hidden ? 1 : 0, 5, dt);
+    const held = !!(e.frozen || e.stunned);
+    v.anim.update(dt, t, { moving: e.moving && !held, speed: SPEEDS[v.card.speed] ?? 0, deploy: e.deploy, frozen: held, sink: v.sinkK });
     this.setFlash(v, v.flash > 0);
+    this.statusFx(v, e, pos, dt);
 
     // Drop-in: the shadow grows as the unit falls, then a puff of dust when it lands.
     if (e.deploy > 0) {
@@ -352,7 +398,7 @@ export class BattleView {
     }
 
     const f = Math.max(0, Math.min(1, e.hp / e.maxHp));
-    v.bar.visible = f < 0.999 || e.kind === 'building';
+    v.bar.visible = (f < 0.999 || e.kind === 'building') && v.sinkK < 0.5;
     v.bar.userData.fill.scale.x = v.bar.userData.width * f;
   }
 
@@ -467,12 +513,12 @@ export class BattleView {
 
   /** Accumulates hp lost/gained and pops a floating number every few hits. */
   trackDamage(v, e, dt) {
-    let delta = v.lastHp - e.hp;
+    const raw = v.lastHp - e.hp;
     v.lastHp = e.hp;
     // Buildings lose hp steadily over their lifetime; that decay isn't a hit.
-    if (v.card?.lifetime) delta -= (e.maxHp / v.card.lifetime) * dt * 1.5;
+    const delta = v.card?.lifetime ? raw - (e.maxHp / v.card.lifetime) * dt * 1.5 : raw;
     if (delta > 0) v.dmgAcc += delta;
-    else if (delta < -1) this.showNumber(v, delta);
+    else if (raw < -1) this.showNumber(v, raw);
     v.dmgT += dt;
     if (v.dmgAcc >= 8 && v.dmgT > 0.12) {
       this.showNumber(v, v.dmgAcc);
@@ -539,12 +585,33 @@ export class BattleView {
       case 'shot': {
         const src = this.attackerAct(ev);
         this.spawnProjectile(ev, src);
-        if (ev.kind === 'arrow') sfx.bow();
-        else if (ev.kind === 'fireball') sfx.fireball();
+        if (ev.kind === 'arrow' || ev.kind === 'bolt') sfx.bow();
+        else if (ev.kind === 'fireball' || ev.kind === 'dragonfire') sfx.fireball();
         else if (ev.kind === 'cannonball') sfx.cannon();
+        else if (ev.kind === 'bullet') sfx.musket();
         else sfx.bombThrow();
         break;
       }
+      case 'spell': {
+        // Landing marker so both players can see where it will hit.
+        this.addZone(ev.x, ev.y, ev.radius, this.mat.spellRing, Math.max(0.35, ev.flight + 0.1));
+        this.zones.at(-1).mesh.material.color.setHex(ev.team === 0 ? 0x9fd0ff : 0xff9f9f);
+        if (ev.flight > 0) this.spawnSpellProjectile(ev);
+        sfx.spellCast();
+        break;
+      }
+      case 'spellHit':
+        this.spellImpact(ev);
+        break;
+      case 'beam':
+        this.showBeam(ev);
+        break;
+      case 'reveal':
+        sfx.reveal(ev.up);
+        break;
+      case 'charge':
+        sfx.charge();
+        break;
       case 'melee': {
         const src = this.attackerAct(ev);
         this.hitFlash(ev.to);
@@ -602,25 +669,46 @@ export class BattleView {
 
   spawnProjectile(ev, src) {
     const kind = ev.kind;
-    const mesh = new THREE.Mesh(kind === 'arrow' ? this.geo.arrow : this.geo.sphere, this.mat[kind]);
-    if (kind !== 'arrow') mesh.scale.setScalar({ bomb: 0.28, cannonball: 0.26, fireball: 0.38 }[kind]);
+    const mesh = new THREE.Mesh(kind === 'arrow' ? this.geo.arrow : this.geo.sphere, this.mat[kind] ?? this.mat.bomb);
+    if (kind !== 'arrow') mesh.scale.setScalar(PROJECTILE_SIZE[kind] ?? 0.25);
     mesh.castShadow = true;
     // Launch from the bow hand / throwing hand / torch / muzzle when the shooter has one.
     const launch = src?.model?.launch ?? src?.crew?.launch;
     const start = launch ? launch.getWorldPosition(new THREE.Vector3()) : tileToWorld(ev.fx, ev.fy, ev.fh);
-    if (kind === 'cannonball') {
-      this.fx.spawn('glow', start, { size: 1.6, life: 0.12, tint: [1, 0.7, 0.3] });
-      this.fx.smoke(start, 4, 0.3, 0.6);
+    if (kind === 'cannonball' || kind === 'bullet') {
+      this.fx.spawn('glow', start, { size: kind === 'bullet' ? 0.8 : 1.6, life: 0.1, tint: [1, 0.75, 0.35] });
+      this.fx.smoke(start, kind === 'bullet' ? 1 : 4, 0.2, kind === 'bullet' ? 0.35 : 0.6);
     }
     mesh.position.copy(start);
     this.group.add(mesh);
     this.projectiles.push({ mesh, kind, ev, t: 0, start, tx: ev.tx, ty: ev.ty, trail: 0 });
   }
 
+  /** Spells fly from the caster's King Tower; Arrows is a whole volley of shafts. */
+  spawnSpellProjectile(ev) {
+    const kind = ev.card === 'fireball' ? 'spellFireball' : ev.card === 'arrows' ? 'spellArrows' : 'spellBarrel';
+    const start = tileToWorld(ev.fx, ev.fy, 6);
+    let mesh;
+    if (kind === 'spellArrows') {
+      mesh = new THREE.Group();
+      for (let i = 0; i < 14; i++) {
+        const a = new THREE.Mesh(this.geo.arrow, this.mat.arrow);
+        a.position.set((Math.random() - 0.5) * ev.radius * 1.4, (Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * ev.radius * 1.4);
+        mesh.add(a);
+      }
+    } else {
+      mesh = new THREE.Mesh(kind === 'spellBarrel' ? this.geo.barrel : this.geo.sphere, this.mat[kind]);
+      if (kind === 'spellFireball') mesh.scale.setScalar(PROJECTILE_SIZE.spellFireball);
+    }
+    mesh.position.copy(start);
+    this.group.add(mesh);
+    this.projectiles.push({ mesh, kind, ev: { ...ev, th: 0.3, tx: ev.x, ty: ev.y }, t: 0, start, tx: ev.x, ty: ev.y, trail: 0, spell: true });
+  }
+
   updateProjectiles(dt) {
     for (const p of this.projectiles) {
       p.t += dt;
-      const target = this.visuals.get(p.ev.to);
+      const target = p.spell ? null : this.visuals.get(p.ev.to);
       if (target?.last && !target.last.dead) {
         p.tx = target.last.x;
         p.ty = target.last.y;
@@ -631,15 +719,25 @@ export class BattleView {
       p.mesh.position.lerpVectors(p.start, end, k);
       p.mesh.position.y += Math.sin(Math.PI * k) * PROJECTILE_ARC[p.kind];
       const pos = p.mesh.position;
-      if (p.kind === 'arrow') p.mesh.lookAt(pos.clone().add(pos.clone().sub(prev)));
+      const dir = pos.clone().add(pos.clone().sub(prev));
+      if (p.kind === 'arrow' || p.kind === 'spellArrows') p.mesh.lookAt(dir);
+      else if (p.kind === 'spellBarrel') p.mesh.rotation.z += dt * 9;
       else p.mesh.rotation.x += dt * 8;
       p.trail -= dt;
       if (p.trail <= 0) {
         p.trail = 0.016;
         if (p.kind === 'arrow') this.fx.spawn('glow', pos, { size: 0.35, life: 0.22, tint: [1, 0.85, 0.5] });
-        else if (p.kind === 'fireball') {
-          this.fx.spawn('fire', pos, { size: 0.9, life: 0.35, vel: [0, 0.6, 0], grow: 0.4, spin: 2 });
-          this.fx.spawn('glow', pos, { size: 1.4, life: 0.15, tint: [1, 0.55, 0.2] });
+        else if (p.kind === 'fireball' || p.kind === 'dragonfire' || p.kind === 'spellFireball') {
+          const big = p.kind === 'spellFireball' ? 2 : p.kind === 'dragonfire' ? 0.6 : 1;
+          this.fx.spawn('fire', pos, { size: 0.9 * big, life: 0.35, vel: [0, 0.6, 0], grow: 0.4 * big, spin: 2 });
+          this.fx.spawn('glow', pos, { size: 1.4 * big, life: 0.15, tint: [1, 0.55, 0.2] });
+          if (p.kind === 'spellFireball') this.fx.spawn('smoke', pos, { size: 1.2, life: 0.8, grow: 1, tint: [0.5, 0.45, 0.42] });
+        } else if (p.kind === 'bolt') this.fx.spawn('glow', pos, { size: 0.5, life: 0.2, tint: [0.5, 0.75, 1] });
+        else if (p.kind === 'bullet') this.fx.spawn('glow', pos, { size: 0.25, life: 0.12, tint: [1, 0.95, 0.8] });
+        else if (p.kind === 'spellArrows') {
+          for (const c of p.mesh.children) {
+            if (Math.random() < 0.3) this.fx.spawn('glow', c.getWorldPosition(_v), { size: 0.3, life: 0.18, tint: [1, 0.85, 0.5] });
+          }
         } else if (p.kind === 'bomb') {
           this.fx.spawn('spark', { x: pos.x, y: pos.y + 0.3, z: pos.z }, { size: 0.16, life: 0.25, vel: [0, 1, 0], tint: [1, 0.8, 0.3] });
           this.fx.spawn('smoke', pos, { size: 0.35, life: 0.6, grow: 0.5, tint: [0.8, 0.8, 0.8] });
@@ -650,13 +748,146 @@ export class BattleView {
       if (k >= 1) {
         p.done = true;
         this.group.remove(p.mesh);
+        if (p.spell) continue;
         if (!p.ev.splash) this.hitFlash(p.ev.to);
-        const target = this.visuals.get(p.ev.to);
         if (target) this.impactCamera(target);
       }
     }
     this.projectiles = this.projectiles.filter((p) => !p.done);
   }
+
+  /** Tesla zaps and Inferno beams: stretched glowing tubes from emitter to target. */
+  showBeam(ev) {
+    const src = this.visuals.get(ev.from);
+    const dst = this.visuals.get(ev.to);
+    if (!src || !dst) return;
+    let b = this.beams.get(ev.from);
+    const mat = ev.kind === 'tesla' ? this.mat.beam.tesla : this.mat.beam.inferno[ev.stage];
+    if (!b) {
+      b = { mesh: new THREE.Mesh(this.geo.beam, mat), from: ev.from };
+      b.mesh.renderOrder = 8;
+      this.group.add(b.mesh);
+      this.beams.set(ev.from, b);
+    }
+    b.mesh.material = mat;
+    b.to = ev.to;
+    b.kind = ev.kind;
+    b.stage = ev.stage;
+    b.life = ev.kind === 'tesla' ? 0.14 : 0.5;
+    this.hitFlash(ev.to);
+    const p = dst.obj.position;
+    const h = dst.kind === 'tower' ? 2.4 : (dst.model?.height ?? 1.2) * 0.55;
+    this.fx.sparks({ x: p.x, y: h, z: p.z }, ev.kind === 'tesla' ? 6 : 2, ev.kind === 'tesla' ? [0.6, 0.95, 1] : [1, 0.6, 0.2], 3);
+    if (ev.kind === 'tesla') sfx.teslaZap();
+    else sfx.beam(ev.stage);
+  }
+
+  updateBeams(dt) {
+    for (const [id, b] of this.beams) {
+      b.life -= dt;
+      const src = this.visuals.get(b.from);
+      const dst = this.visuals.get(b.to);
+      if (b.life <= 0 || !src || !dst || dst.deathT != null) {
+        this.group.remove(b.mesh);
+        this.beams.delete(id);
+        continue;
+      }
+      const launch = src.model?.launch;
+      const start = launch ? launch.getWorldPosition(new THREE.Vector3()) : src.obj.position.clone().setY(1.5);
+      const end = dst.obj.position.clone().setY(dst.kind === 'tower' ? 2.4 : (dst.model?.height ?? 1.2) * 0.55);
+      const len = start.distanceTo(end);
+      const width = b.kind === 'tesla' ? 0.05 + Math.random() * 0.05 : 0.07 + b.stage * 0.07 + Math.sin(performance.now() / 40) * 0.015;
+      b.mesh.position.copy(start);
+      b.mesh.lookAt(end);
+      b.mesh.scale.set(width, width, len);
+    }
+  }
+
+  /** Lingering ground decals for Freeze and Rage, plus landing markers for incoming spells. */
+  addZone(x, y, radius, mat, duration, pulse = false) {
+    const mesh = new THREE.Mesh(this.geo.zone, mat.clone());
+    mesh.position.copy(tileToWorld(x, y, 0.06));
+    mesh.scale.setScalar(radius);
+    mesh.renderOrder = 6;
+    this.group.add(mesh);
+    this.zones.push({ mesh, t: 0, duration, pulse, base: mat.opacity });
+  }
+
+  updateZones(dt) {
+    for (const z of this.zones) {
+      z.t += dt;
+      const fade = Math.min(1, (z.duration - z.t) / 0.4);
+      z.mesh.material.opacity = z.base * Math.max(0, fade) * (z.pulse ? 0.75 + Math.sin(z.t * 6) * 0.25 : 1);
+      if (z.t >= z.duration) {
+        this.group.remove(z.mesh);
+        z.mesh.material.dispose();
+        z.done = true;
+      }
+    }
+    this.zones = this.zones.filter((z) => !z.done);
+  }
+
+  spellImpact(ev) {
+    const p = tileToWorld(ev.x, ev.y);
+    const r = ev.radius;
+    switch (ev.card) {
+      case 'fireball':
+        this.fx.explosion(p, r * 0.8, 'fireball');
+        this.fx.shockwave(p, [1, 0.55, 0.2], r * 2.6);
+        this.engine.shake(0.35);
+        sfx.boom();
+        break;
+      case 'arrows':
+        for (let i = 0; i < 26; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const d = Math.sqrt(Math.random()) * r;
+          this.fx.hitPuff({ x: p.x + Math.cos(a) * d, y: 0.3, z: p.z + Math.sin(a) * d }, [1, 0.9, 0.7]);
+        }
+        sfx.arrows();
+        break;
+      case 'zap':
+        for (let i = 0; i < 4; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const d = Math.random() * r * 0.7;
+          const bolt = new THREE.Mesh(this.geo.beam, this.mat.beam.tesla);
+          bolt.position.set(p.x + Math.cos(a) * d, 9, p.z + Math.sin(a) * d);
+          bolt.lookAt(bolt.position.x + (Math.random() - 0.5), 0, bolt.position.z + (Math.random() - 0.5));
+          bolt.scale.set(0.12, 0.12, 9);
+          this.group.add(bolt);
+          setTimeout(() => this.group.remove(bolt), 140);
+        }
+        this.fx.shockwave(p, [0.6, 0.95, 1], r * 2.2);
+        this.fx.sparks({ x: p.x, y: 0.5, z: p.z }, 20, [0.6, 0.95, 1], 6);
+        this.engine.shake(0.15);
+        sfx.zap();
+        break;
+      case 'freeze':
+        this.addZone(ev.x, ev.y, r, this.mat.freezeZone, ev.duration);
+        this.fx.shockwave(p, [0.75, 0.92, 1], r * 2.2);
+        for (let i = 0; i < 18; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const d = Math.sqrt(Math.random()) * r;
+          this.fx.spawn('glow', { x: p.x + Math.cos(a) * d, y: 0.2 + Math.random(), z: p.z + Math.sin(a) * d }, { size: 0.5, life: 1.2, vel: [0, 0.3, 0], tint: [0.75, 0.92, 1] });
+        }
+        sfx.freeze();
+        break;
+      case 'rage':
+        this.addZone(ev.x, ev.y, r, this.mat.rageZone, ev.duration, true);
+        this.fx.shockwave(p, [0.85, 0.35, 1], r * 2.2);
+        sfx.rage();
+        break;
+      case 'goblin-barrel':
+        for (let i = 0; i < 8; i++) {
+          const mesh = new THREE.Mesh(this.geo.chunk, this.mat.spellBarrel);
+          mesh.scale.set(0.08, 0.5, 0.14);
+          this.addDebris(mesh, { x: p.x, y: 0.6, z: p.z }, 3, 3.5, 1.5);
+        }
+        this.fx.smoke({ x: p.x, y: 0.3, z: p.z }, 6, 0.6, 0.9);
+        sfx.barrel();
+        break;
+    }
+  }
+
 
   // ------------------------------------------------------------- deploy UI
 
@@ -664,7 +895,8 @@ export class BattleView {
     return this.lastEnts.some((e) => e.kind === 'tower' && e.team === team && e.towerKind === 'princess' && !e.dead && e.x < ARENA_W / 2 === left);
   }
 
-  canDeploy(x, y) {
+  canDeploy(x, y, cardId) {
+    if (cardId && isSpell(CARD_BY_ID[cardId])) return x >= 0 && x <= ARENA_W && y >= 0 && y <= ARENA_H;
     if (!zoneAllows(0, x, y, (left) => this.princessAlive(1, left))) return false;
     return !this.lastEnts.some((e) => (e.kind === 'tower' || e.kind === 'building') && !e.dead && Math.hypot(e.x - x, e.y - y) < (e.kind === 'tower' ? (e.towerKind === 'king' ? 2 : 1.5) : 0.9));
   }
@@ -700,7 +932,12 @@ export class BattleView {
     this.zoneTex.needsUpdate = true;
   }
 
-  showZones() {
+  showZones(cardId) {
+    // Spells may land anywhere, so they get no forbidden-zone overlay.
+    if (cardId && isSpell(CARD_BY_ID[cardId])) {
+      this.zoneMesh.visible = false;
+      return;
+    }
     this.refreshZones();
     this.zoneMesh.visible = true;
   }
@@ -720,17 +957,27 @@ export class BattleView {
       if (this.preview) this.group.remove(this.preview.obj);
       const card = CARD_BY_ID[cardId];
       const obj = new THREE.Group();
-      const model = buildUnit(cardId, 0);
-      ghostify(model, this.mat.ghost);
-      model.root.rotation.y = Math.PI;
       const ring = new THREE.Mesh(this.geo.ring, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false }));
-      ring.scale.setScalar(card.count > 1 ? 1.3 : Math.max(0.7, card.radius * 1.3));
       ring.position.y = 0.09;
-      obj.add(model.root, ring);
+      if (isSpell(card)) {
+        // Spells preview their area of effect instead of a ghost unit.
+        ring.scale.setScalar(card.spell.radius);
+        const fill = new THREE.Mesh(this.geo.zone, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.12, depthWrite: false }));
+        fill.scale.setScalar(card.spell.radius);
+        fill.position.y = 0.08;
+        obj.add(fill);
+      } else {
+        const model = buildUnit(cardId, 0);
+        ghostify(model, this.mat.ghost);
+        model.root.rotation.y = Math.PI;
+        obj.add(model.root);
+        ring.scale.setScalar(card.count > 1 ? 1.3 : Math.max(0.7, card.radius * 1.3));
+      }
+      obj.add(ring);
       this.group.add(obj);
       this.preview = { cardId, obj, ring };
     }
-    const ok = this.canDeploy(x, y);
+    const ok = this.canDeploy(x, y, cardId);
     this.preview.obj.visible = true;
     this.preview.obj.position.copy(tileToWorld(x, y));
     this.preview.ring.material.color.setHex(ok ? 0xffffff : 0xff4a3a);

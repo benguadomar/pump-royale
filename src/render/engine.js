@@ -6,7 +6,7 @@ import { smaa } from 'three/addons/tsl/display/SMAANode.js';
 import * as t3 from '@typegpu/three';
 import { d, std } from 'typegpu';
 import { ARENA_W, ARENA_H } from '../sim/constants.js';
-import { skyColor, envSkyColor } from './shaders.js';
+import { skyColor, envSkyColor, applyTheme } from './shaders.js';
 import { buildWorld } from './world.js';
 import { Fx } from './fx.js';
 import { state } from '../state.js';
@@ -166,6 +166,16 @@ export class Engine {
     this.mode = mode;
     this.resize();
     this.transition = { from, t: 0, dur: mode === 'battle' ? 1.4 : 1.1 };
+  }
+
+  /** Re-themes the whole diorama for an arena: palette uniforms, fog, sunlight and props. */
+  setArena(arena) {
+    if (this.arena === arena) return;
+    this.arena = arena;
+    applyTheme(arena);
+    this.scene.fog.color.setHex(arena.fog);
+    this.sun.color.setHex(arena.sun);
+    this.world.setProps(arena.props);
   }
 
   setInsets(insets) {

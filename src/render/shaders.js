@@ -1,6 +1,47 @@
 import * as t3 from '@typegpu/three';
 import { d, std } from 'typegpu';
 import { perlin2d } from '@typegpu/noise';
+import { uniform } from 'three/tsl';
+import { Color, LinearSRGBColorSpace } from 'three/webgpu';
+
+/**
+ * Arena palette, updated by `applyTheme`. Values are raw sRGB (the shaders linearise),
+ * so colours are stored with the linear colour space to skip three's conversion.
+ */
+const srgb = (hex) => new Color().setHex(hex, LinearSRGBColorSpace);
+export const theme = {
+  grassLight: uniform(srgb(0x80c247)),
+  grassDark: uniform(srgb(0x69b33a)),
+  path: uniform(srgb(0xe0cc9a)),
+  waterDeep: uniform(srgb(0x1f8fea)),
+  waterShallow: uniform(srgb(0x5ccbfa)),
+  leaves: uniform(srgb(0xffffff)),
+  skyTop: uniform(srgb(0x6aa8e6)),
+  skyHorizon: uniform(srgb(0xdbeefa)),
+  snow: uniform(0),
+};
+
+export function applyTheme(arena) {
+  theme.grassLight.value.setHex(arena.grass[0], LinearSRGBColorSpace);
+  theme.grassDark.value.setHex(arena.grass[1], LinearSRGBColorSpace);
+  theme.path.value.setHex(arena.path, LinearSRGBColorSpace);
+  theme.waterDeep.value.setHex(arena.water[0], LinearSRGBColorSpace);
+  theme.waterShallow.value.setHex(arena.water[1], LinearSRGBColorSpace);
+  theme.leaves.value.setHex(arena.leaves, LinearSRGBColorSpace);
+  theme.skyTop.value.setHex(arena.sky[0], LinearSRGBColorSpace);
+  theme.skyHorizon.value.setHex(arena.sky[1], LinearSRGBColorSpace);
+  theme.snow.value = arena.props === 'snow' ? 0.8 : 0;
+}
+
+const uGrassLight = t3.fromTSL(theme.grassLight, d.vec3f);
+const uGrassDark = t3.fromTSL(theme.grassDark, d.vec3f);
+const uPath = t3.fromTSL(theme.path, d.vec3f);
+const uWaterDeep = t3.fromTSL(theme.waterDeep, d.vec3f);
+const uWaterShallow = t3.fromTSL(theme.waterShallow, d.vec3f);
+const uLeaves = t3.fromTSL(theme.leaves, d.vec3f);
+const uSkyTop = t3.fromTSL(theme.skyTop, d.vec3f);
+const uSkyHorizon = t3.fromTSL(theme.skyHorizon, d.vec3f);
+const uSnow = t3.fromTSL(theme.snow, d.f32);
 
 // All shaders below are TypeGPU functions ('use gpu'), compiled to WGSL on WebGPU and to
 // GLSL (via @typegpu/gl) when three falls back to its WebGL2 backend.
@@ -29,8 +70,8 @@ const lawnHeight = (p) => {
 export const skyColor = t3.toTSL(() => {
   'use gpu';
   const uv = t3.screenUV.$;
-  const top = d.vec3f(0.42, 0.66, 0.9);
-  const horizon = d.vec3f(0.86, 0.93, 0.98);
+  const top = uSkyTop.$;
+  const horizon = uSkyHorizon.$;
   const k = std.smoothstep(0.0, 0.85, uv.y);
   const t = t3.time.$;
   const haze = perlin2d.sample(d.vec2f(uv.x * 3 + t * 0.01, uv.y * 6)) * 0.5 + 0.5;
@@ -54,8 +95,8 @@ export const fieldColor = t3.toTSL(() => {
   const tile = uv * d.vec2f(W, H);
   const cell = std.floor(tile);
   const checker = std.fract((cell.x + cell.y) * 0.5) * 2;
-  const light = d.vec3f(0.5, 0.76, 0.28);
-  const dark = d.vec3f(0.4, 0.66, 0.22);
+  const light = uGrassLight.$;
+  const dark = uGrassDark.$;
   const grain = perlin2d.sample(tile * 0.45) * 0.5 + 0.5;
   // Fine blade streaks and clover clumps so the lawn reads as grass, not flat paint.
   const blades = perlin2d.sample(tile * d.vec2f(9.0, 2.2)) * 0.5 + 0.5;
@@ -70,7 +111,7 @@ export const fieldColor = t3.toTSL(() => {
   // Packed dirt path: tyre-like ruts, pebbles and darker damp edges.
   const rut = 1 - std.smoothstep(0.05, 0.18, std.abs(std.abs(laneDist) - 0.42));
   const pebble = std.step(0.86, hash2(std.floor(tile * 7.0))) * (perlin2d.sample(tile * 7.0) * 0.5 + 0.5);
-  let sand = d.vec3f(0.88, 0.8, 0.6) * (0.9 + grain * 0.12) * (1 - rut * 0.1 * laneMask);
+  let sand = uPath.$ * (0.9 + grain * 0.12) * (1 - rut * 0.1 * laneMask);
   sand = std.mix(sand, d.vec3f(0.62, 0.56, 0.47), pebble * 0.6);
   const pathMask = std.max(laneMask, crossMask);
   const pathEdge = std.smoothstep(0.0, 0.35, pathMask) * (1 - std.smoothstep(0.35, 0.9, pathMask));
@@ -114,8 +155,8 @@ export const riverColor = t3.toTSL(() => {
   const ripples = perlin2d.sample(p * 2.2 + d.vec2f(t * 1.1, -t * 0.3) + flow * 0.8);
   const across = std.abs(uv.y - 0.5) * 2;
   // Bright pool blue, deepest along the middle of the channel.
-  const deep = d.vec3f(0.12, 0.56, 0.92);
-  const shallow = d.vec3f(0.36, 0.8, 0.98);
+  const deep = uWaterDeep.$;
+  const shallow = uWaterShallow.$;
   let col = std.mix(deep, shallow, across * 0.55 + ripples * 0.15);
   // Two drifting layers of thin bright lines form the cellular caustic web.
   const c1 = 1 - std.abs(perlin2d.sample(p * 1.5 + d.vec2f(t * 0.35, t * 0.12) + flow * 0.6));
@@ -227,12 +268,12 @@ export const surfaceColor = t3.toTSL(() => {
     // Grass: soft clumps of lighter/darker green with speckles.
     const clump = perlin2d.sample(q * 0.35) * 0.5 + 0.5;
     const speck = std.step(0.82, hash2(std.floor(q * 9.0)));
-    col = base * (0.84 + clump * 0.26) + d.vec3f(0.03, 0.05, 0.0) * speck;
+    col = (base * (0.84 + clump * 0.26) + d.vec3f(0.03, 0.05, 0.0) * speck) * toLinear(uLeaves.$);
   } else if (id < 6.5) {
     // Foliage: darker inside the canopy, sunlit tips.
     const tip = std.clamp(surfAttr.$.y * 4.0, 0, 1);
     const leaf = perlin2d.sample(q * 6.0) * 0.5 + 0.5;
-    col = base * (0.72 + tip * 0.35) * (0.88 + leaf * 0.2);
+    col = base * (0.72 + tip * 0.35) * (0.88 + leaf * 0.2) * toLinear(uLeaves.$);
   } else if (id < 7.5) {
     col = base * (0.93 + perlin2d.sample(q * 7.0) * 0.06);
   } else if (id < 8.5) {
@@ -248,6 +289,10 @@ export const surfaceColor = t3.toTSL(() => {
     const w = std.sin(q.x * 160) * std.sin(q.y * 160);
     col = base * (0.95 + w * 0.04);
   }
+  // Snowy arenas: snow settles on upward faces of grass, leaves and rock.
+  const outdoor = std.select(d.f32(0), d.f32(1), id > 3.5 && id < 6.5);
+  const settle = std.smoothstep(0.45, 0.85, t3.normalWorld.$.y) * outdoor * uSnow.$;
+  col = std.mix(col, d.vec3f(0.86, 0.9, 0.95) * (0.92 + grain * 0.08), settle);
   return d.vec4f(col, 1);
 });
 

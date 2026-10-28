@@ -704,6 +704,98 @@ export function buildWorld(engine) {
   const lobbyTowers = new THREE.Group();
   scene.add(lobbyTowers);
 
+  // ---------------------------------------------------------------- arena props
+
+  /** Theme props scattered on the island margin around the walls (rebuilt on arena change). */
+  const buildProps = (kind) => {
+    const pr = rng(4242);
+    const parts = [];
+    const spot = (pad = 1.4) => {
+      for (let t = 0; t < 60; t++) {
+        const x = (pr() - 0.5) * (IW - 1);
+        const z = (pr() - 0.5) * (IH - 1);
+        if (Math.abs(x) < hw + pad && Math.abs(z) < hh + pad) continue;
+        return [x, z];
+      }
+      return [IW / 2 - 1, 0];
+    };
+    if (kind === 'bones') {
+      for (let i = 0; i < 16; i++) {
+        const [x, z] = spot();
+        // Skull: dome + jaw + dark sockets.
+        const s = 0.3 + pr() * 0.2;
+        parts.push(tint(new THREE.SphereGeometry(s, 10, 8).translate(x, s * 0.9, z), 0xefe9da));
+        parts.push(tint(new THREE.BoxGeometry(s * 1.1, s * 0.45, s * 0.9).translate(x, s * 0.35, z + s * 0.2), 0xe3dccb));
+        for (const sx of [-1, 1]) parts.push(tint(new THREE.SphereGeometry(s * 0.22, 6, 4).translate(x + sx * s * 0.35, s * 1.0, z + s * 0.82), 0x2a2622));
+        for (let b = 0; b < 2; b++) {
+          const bone = new THREE.CapsuleGeometry(0.06, 0.5, 3, 6).rotateZ(Math.PI / 2).rotateY(pr() * Math.PI).translate(x + (pr() - 0.5) * 1.4, 0.07, z + (pr() - 0.5) * 1.4);
+          parts.push(tint(bone, 0xe9e2d0));
+        }
+      }
+      for (let i = 0; i < 3; i++) {
+        const [x, z] = spot(2.5);
+        const ry = pr() * Math.PI;
+        for (let k = 0; k < 5; k++) {
+          const rib = new THREE.TorusGeometry(1.3 - k * 0.1, 0.09, 5, 12, Math.PI).rotateY(ry).translate(x + Math.cos(ry) * (k - 2) * 0.5, 0, z - Math.sin(ry) * (k - 2) * 0.5);
+          parts.push(tint(rib, 0xe7e0cc));
+        }
+      }
+    } else if (kind === 'fences') {
+      for (let i = 0; i < 12; i++) {
+        const [x, z] = spot();
+        const ry = pr() * Math.PI;
+        for (let k = 0; k < 5; k++) {
+          const hgt = 1.0 + pr() * 0.4;
+          const off = (k - 2) * 0.32;
+          const px = x + Math.cos(ry) * off;
+          const pz = z - Math.sin(ry) * off;
+          parts.push(tint(new THREE.CylinderGeometry(0.13, 0.15, hgt, 6).translate(px, hgt / 2, pz), PALETTE.wood, null, SURF.wood));
+          parts.push(tint(new THREE.ConeGeometry(0.13, 0.3, 6).translate(px, hgt + 0.15, pz), PALETTE.woodDark, null, SURF.wood));
+        }
+        parts.push(tint(new THREE.BoxGeometry(1.7, 0.12, 0.1).rotateY(ry).translate(x, 0.6, z), PALETTE.woodDark, null, SURF.wood));
+      }
+      for (let i = 0; i < 4; i++) {
+        const [x, z] = spot(2);
+        for (let k = 0; k < 3; k++) {
+          parts.push(tint(new THREE.BoxGeometry(0.7, 0.62, 0.7).translate(x, 0.31 + k * 0.62, z), [0xb7743e, 0xc4502f, 0x3f8fd0][k], null, SURF.wood));
+          for (const sx of [-1, 1]) parts.push(tint(new THREE.BoxGeometry(0.12, 0.12, 0.05).translate(x + sx * 0.15, 0.42 + k * 0.62, z + 0.36), 0x1c1c1c));
+        }
+      }
+    } else if (kind === 'snow') {
+      for (let i = 0; i < 5; i++) {
+        const [x, z] = spot();
+        parts.push(tint(new THREE.SphereGeometry(0.45, 12, 10).translate(x, 0.4, z), 0xf4f8fb));
+        parts.push(tint(new THREE.SphereGeometry(0.32, 12, 10).translate(x, 1.0, z), 0xf4f8fb));
+        parts.push(tint(new THREE.SphereGeometry(0.22, 12, 10).translate(x, 1.45, z), 0xf4f8fb));
+        parts.push(tint(new THREE.ConeGeometry(0.05, 0.25, 6).rotateX(Math.PI / 2).translate(x, 1.45, z + 0.3), 0xf08a2a));
+        for (const sx of [-1, 1]) parts.push(tint(new THREE.SphereGeometry(0.035, 6, 4).translate(x + sx * 0.08, 1.53, z + 0.19), 0x1c1c1c));
+      }
+      for (let i = 0; i < 8; i++) {
+        const [x, z] = spot();
+        for (let k = 0; k < 3; k++) {
+          const g = jitter(new THREE.OctahedronGeometry(0.4 + pr() * 0.3, 0), pr, 0.1).scale(0.6, 1.6, 0.6).rotateZ((pr() - 0.5) * 0.8).translate(x + (pr() - 0.5), 0.45, z + (pr() - 0.5));
+          parts.push(tint(g, 0xa8dcf2, null, SURF.metal));
+        }
+      }
+      for (let i = 0; i < 14; i++) {
+        const [x, z] = spot(1.2);
+        parts.push(tint(new THREE.SphereGeometry(0.8 + pr() * 0.6, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.35, 1).translate(x, 0, z), 0xf2f7fb));
+      }
+    } else if (kind === 'gold') {
+      for (let i = 0; i < 10; i++) {
+        const [x, z] = spot();
+        parts.push(tint(new THREE.BoxGeometry(0.9, 0.3, 0.9).translate(x, 0.15, z), 0xe9dcc0, null, SURF.brick));
+        parts.push(gradient(tint(new THREE.CylinderGeometry(0.18, 0.32, 2.6, 4).translate(x, 1.6, z), 0xf0b93a, null, SURF.metal), 0.3, 2.9, 0.75, 1.1));
+        parts.push(tint(new THREE.OctahedronGeometry(0.28, 0).translate(x, 3.15, z), 0xe04ad8, null, SURF.metal));
+      }
+    }
+    if (!parts.length) return null;
+    const mesh = mergedMesh(parts);
+    island.add(mesh);
+    return mesh;
+  };
+  let props = null;
+
   return {
     river,
     update(dt, t) {
@@ -712,6 +804,14 @@ export function buildWorld(engine) {
     },
     setDetail(high) {
       for (const m of highOnly) m.visible = high;
+    },
+    /** Swaps the theme props for an arena (colours are applied via shader uniforms). */
+    setProps(kind) {
+      if (props) {
+        island.remove(props);
+        props.geometry.dispose();
+      }
+      props = buildProps(kind);
     },
     /** Decorative towers shown while the lobby camera orbits. */
     showLobbyTowers(visible) {

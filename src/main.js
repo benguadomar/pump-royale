@@ -2,9 +2,10 @@ import './styles.css';
 import { Engine } from './render/engine.js';
 import { BattleView } from './render/battleView.js';
 import { LocalSession, OnlineSession } from './game/session.js';
-import { CARDS, TOWERS, cardImg } from './data/cards.js';
+import { HAS_PNG } from './data/cards.js';
+import { generateCardArt } from './render/cardArt.js';
 import { EMOTES, emoteImg } from './data/emotes.js';
-import { state, recordMatch } from './state.js';
+import { state, recordMatch, currentArena } from './state.js';
 import { net } from './net.js';
 import { sfx, loadAudio, playMusic } from './audio.js';
 import { h, img, app } from './ui/dom.js';
@@ -89,8 +90,8 @@ function fatal(err) {
 
 async function boot() {
   const started = performance.now();
-  const textureUrls = [...CARDS.map((c) => cardImg(c.id)), cardImg(TOWERS.princess.id), cardImg(TOWERS.king.id)];
-  const total = textureUrls.length + UI_IMAGES.length + 3;
+  const textureUrls = [...HAS_PNG].map((id) => `/assets/cards/${id}.png`);
+  const total = textureUrls.length + UI_IMAGES.length + 4;
   let done = 0;
   const progress = () => (barFill.style.width = `${(++done / total) * 100}%`);
 
@@ -99,10 +100,14 @@ async function boot() {
   engineRef = engine;
   // Dev-only handle for driving matches from the browser console / automated checks.
   if (import.meta.env.DEV) window.__pump = { engine, battle: null };
+  engine.setArena(currentArena());
   fitUi();
   progress();
   await Promise.all([
-    engine.preload(textureUrls, progress),
+    ...textureUrls.map((src) => loadImage(src).then(progress)),
+    generateCardArt(engine)
+      .catch((e) => console.warn('card art', e))
+      .then(progress),
     ...UI_IMAGES.map((src) => loadImage(src).then(progress)),
     document.fonts.ready.then(progress),
     loadAudio().then(progress),
@@ -146,7 +151,9 @@ async function boot() {
     leaveLobby();
     engine.world.showLobbyTowers(false);
     engine.setMode('battle');
-    playMusic('battle');
+    const arena = currentArena();
+    engine.setArena(arena);
+    playMusic(arena.music);
 
     const online = session.mode === 'online';
     let finished = false;
