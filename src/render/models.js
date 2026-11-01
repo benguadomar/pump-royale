@@ -105,7 +105,11 @@ const G = {
     return new THREE.ExtrudeGeometry(s, { depth: 1, bevelEnabled: false }).translate(0, 0, -0.5);
   })(),
   // Head coverings: sphere shells with a round hole cut around the face (+Z).
-  hood: shell({ faceAngle: 52, minY: -0.62 }),
+  hood: shell({ faceAngle: 50, minY: -0.62 }),
+  // Rolled edge around the hood's face opening (matches `hood`'s 50° cut around the face direction).
+  hoodRim: new THREE.TorusGeometry(Math.sin(THREE.MathUtils.degToRad(50)), 0.06, 6, 32)
+    .translate(0, 0, Math.cos(THREE.MathUtils.degToRad(50)))
+    .rotateX(Math.atan2(0.12, 1)),
   hair: shell({ faceAngle: 62, minY: -0.25 }),
   dome: new THREE.SphereGeometry(1, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2),
   // Band of hair around the back and sides of a bald head.
@@ -117,7 +121,7 @@ const G = {
  * face direction, and between `minY`/`maxY` (cuts the neck hole or a bald crown).
  */
 function shell({ faceAngle, minY = -1, maxY = 1 }) {
-  const src = new THREE.SphereGeometry(1, 28, 18).toNonIndexed();
+  const src = new THREE.SphereGeometry(1, 48, 32).toNonIndexed();
   const pos = src.attributes.position;
   const face = new THREE.Vector3(0, -0.12, 1).normalize();
   const limit = Math.cos(THREE.MathUtils.degToRad(faceAngle));
@@ -233,7 +237,7 @@ function compile(def, mat = unitMat) {
 // ------------------------------------------------------------------ skinning
 
 /** Parts that stay separate rigid meshes on their bone (shown/hidden on their own). */
-const RIGID_PARTS = new Set(['prop']);
+const RIGID_PARTS = new Set(['prop', 'staff']);
 /** Joints whose skin blends into the parent bone near the pivot (shoulder, elbow, hip, knee, neck). */
 const SOFT_JOINTS = new Set(['head', 'armL', 'armR', 'foreL', 'foreR', 'legL', 'legR', 'shinL', 'shinR', 'pl0', 'pl1', 'pl2', 'pl3']);
 /** Skin within this distance of a soft joint's pivot is shared with the parent bone (model units). */
@@ -395,7 +399,7 @@ function mascot(def, o = {}) {
   // Head: cranium, jaw, ears and the face.
   add('head', place(G.sphere, skin, headC, 0, headR));
   add('head', place(G.sphere, skin, P(0, 0.75, 0.022), 0, [0.135, 0.092, 0.13]));
-  for (const [, sx] of sides) add('head', place(G.sphere, shade(skin, 0.95), P(0.163 * sx, 0.8, -0.005), [0, 0.3 * sx, 0], [0.022, 0.042, 0.03]));
+  if (!o.hooded) for (const [, sx] of sides) add('head', place(G.sphere, shade(skin, 0.95), P(0.163 * sx, 0.8, -0.005), [0, 0.3 * sx, 0], [0.022, 0.042, 0.03]));
   if (!o.noEyes) {
     for (const [, sx] of sides) {
       if (!o.dotEyes) add('head', place(G.sphere, 0xfafafa, P(0.06 * sx, 0.835, 0.151), [0, 0.35 * sx, 0], [0.032, 0.036, 0.014]));
@@ -535,6 +539,12 @@ const STYLES = {
     windup: { 'armR.x': -0.3, 'armL.x': -0.9, 'foreL.x': -0.7, 'body.x': -0.12 },
     impact: { 'armR.x': -1.3, 'foreR.x': 0.3, 'armL.x': -0.5, 'body.x': 0.2 },
   },
+  // Wizard: raises the staff and turns the wrist so its flaming tip points at the target, then thrusts.
+  staff: {
+    hold: { 'armR.x': -0.9, 'foreR.x': 0.45, 'staff.x': 1.2 },
+    windup: { 'armR.x': 0.5, 'staff.x': -0.6, 'body.x': -0.12, 'armL.x': -0.9, 'foreL.x': -0.7 },
+    impact: { 'armR.x': -0.5, 'staff.x': 0.4, 'body.x': 0.2, 'armL.x': -0.4 },
+  },
   cannon: { windup: {}, impact: { 'barrel.recoil': 1 } },
   shoot: { hold: { 'armR.x': -1.45, 'armL.x': -1.3, 'armL.y': 0.5, 'foreL.x': -0.4, 'body.y': 0.15 }, windup: {}, impact: { 'body.x': -0.14, 'armR.x': 0.3 } },
   spin: { hold: { 'armR.z': -1.2, 'armL.z': 1.2 }, windup: { 'body.y': 0.6 }, impact: {} },
@@ -545,11 +555,17 @@ const STYLES = {
   king: { hold: { 'armL.x': -1.0, 'armL.y': 0.6, 'foreL.x': -0.6 }, windup: { 'armR.x': -2.4, 'foreR.x': -0.4 }, impact: { 'armR.x': -1.4, 'barrel.recoil': 1 } },
 };
 
+/** Forward bend of the wizard's elbow at rest (idle adds 0.25 on top of his base pose). */
+const STAFF_TILT = 0.75;
+
+/** Hood over the head with a rolled edge around the face opening. */
+const hoodGeos = (m, color, k) => [place(G.hood, color, m.headC, 0, m.cover(k)), place(G.hoodRim, shade(color, 0.82), m.headC, 0, m.cover(k))];
+
 const BUILDERS = {
   archer(def, team) {
     const cloth = TEAM_CLOTH[team];
-    const m = mascot(def, { torso: C.linen, sleeve: C.linen, legs: C.leatherDark, feet: C.leather });
-    m.add('head', place(G.hood, cloth, m.headC, 0, m.cover(1.1)));
+    const m = mascot(def, { torso: C.linen, sleeve: C.linen, legs: C.leatherDark, feet: C.leather, hooded: true });
+    m.add('head', ...hoodGeos(m, cloth, 1.1));
     m.add('head', place(G.coneLo, TEAM_CLOTH_DARK[team], m.P(0, 0.95, -0.15), [-0.9, 0, 0], [0.075, 0.17, 0.075]));
     // Capelet over the shoulders, a bandolier and a tunic skirt.
     m.add('body', place(G.cone, cloth, m.P(0, 0.585, -0.005), 0, [0.205, 0.17, 0.165]));
@@ -580,8 +596,8 @@ const BUILDERS = {
     return { style: 'swing', scale: 1.3 };
   },
   bomber(def) {
-    const m = mascot(def, { noEyes: true, noBrows: true, bulk: 1.1, limb: 1.05, legs: C.navy, feet: C.leatherDark });
-    m.add('head', place(G.hood, C.navy, m.headC, 0, m.cover(1.09)));
+    const m = mascot(def, { noEyes: true, noBrows: true, bulk: 1.1, limb: 1.05, legs: C.navy, feet: C.leatherDark, hooded: true });
+    m.add('head', ...hoodGeos(m, C.navy, 1.09));
     m.add('head', place(G.cyl, shade(C.navy, 0.8), m.P(0, 0.9, 0), 0, [0.168, 0.02, 0.172]));
     for (const sx of [1, -1]) {
       m.add('head', place(new THREE.TorusGeometry(1, 0.26, 8, 18), C.gold, m.P(0.058 * sx, 0.838, 0.155), [0, 0.3 * sx, 0], 0.048));
@@ -648,18 +664,26 @@ const BUILDERS = {
   },
   wizard(def, team) {
     const robe = TEAM_CLOTH[team];
-    const m = mascot(def, { torso: robe, sleeve: robe, legs: robe, feet: C.leatherDark });
-    m.add('head', place(G.hood, robe, m.headC, 0, m.cover(1.12)));
+    const m = mascot(def, { torso: robe, sleeve: robe, legs: robe, feet: C.leatherDark, hooded: true });
+    m.add('head', ...hoodGeos(m, robe, 1.12));
     m.add('body', place(G.cone, robe, m.P(0, 0.265, 0), 0, [0.19, 0.44, 0.16]));
     m.add('body', place(G.cone, TEAM_CLOTH_DARK[team], m.P(0, 0.585, -0.005), 0, [0.205, 0.17, 0.165]));
     belt(m, C.leather, C.gold);
+    // Staff gripped in the right fist on a wrist joint. The elbow rests bent forward by
+    // STAFF_TILT, so the shaft (tilted back by the same angle) stands upright beside him.
     const h = m.hand('R');
-    m.add('foreR', place(G.cylLo, C.wood, [h[0], h[1] + 0.13, h[2] + 0.025], 0, [0.016, 0.6, 0.016]));
-    m.add('foreR', place(G.cyl, C.leatherDark, [h[0], h[1] + 0.41, h[2] + 0.025], 0, [0.03, 0.05, 0.03]));
-    const torch = addPart(def, 'torch', 'foreR', [h[0], h[1] + 0.46, h[2] + 0.025]);
+    const dir = [0, Math.cos(STAFF_TILT), Math.sin(STAFF_TILT)];
+    const at = (k) => [h[0], h[1] + dir[1] * k, h[2] + dir[2] * k];
+    const staff = addPart(def, 'staff', 'foreR', h);
+    staff.geos.push(
+      place(G.cylLo, C.wood, at(0.1), [STAFF_TILT, 0, 0], [0.016, 0.62, 0.016]),
+      place(G.cyl, C.leatherDark, at(0.39), [STAFF_TILT, 0, 0], [0.03, 0.05, 0.03]),
+      place(G.cyl, C.leatherDark, at(0), [STAFF_TILT, 0, 0], [0.022, 0.07, 0.022]),
+    );
+    const torch = addPart(def, 'torch', 'staff', at(0.44));
     torch.mat = flameMat;
-    torch.geos.push(place(G.cone, C.flame, [h[0], h[1] + 0.49, h[2] + 0.025], 0, [0.04, 0.11, 0.04]));
-    return { style: 'cast', scale: 1.35, launch: 'torch' };
+    torch.geos.push(place(G.cone, C.flame, at(0.47), [STAFF_TILT, 0, 0], [0.04, 0.11, 0.04]));
+    return { style: 'staff', scale: 1.35, launch: 'torch', base: { foreR: [-STAFF_TILT + 0.25, 0, 0], staff: [0, 0, 0] } };
   },
   'hog-rider'(def) {
     const pig = addPart(def, 'pig', 'root', [0, 0.42, 0]);
@@ -785,7 +809,12 @@ const UNIT_MODELS = {
       legR: { parent: 'root', at: [-0.09, 0.26, -0.02], tip: [-0.1, 0.12, 0], r: 0.13 },
       shinR: { parent: 'legR', at: [-0.1, 0.12, 0], tip: [-0.1, 0.0, 0.02], r: 0.13 },
     },
-    grips: [{ bone: 'foreR', min: [-0.7, 0.74, -0.25], max: [-0.355, 1.8, 0.4] }],
+    // Blade and guard, then the hilt and pommel below the fist.
+    grips: [
+      { bone: 'foreR', min: [-0.7, 0.74, -0.25], max: [-0.355, 1.8, 0.4] },
+      { bone: 'foreR', min: [-0.52, 0.4, 0.02], max: [-0.3, 0.74, 0.32] },
+      { bone: 'foreR', min: [-0.37, 0.17, 0.02], max: [-0.24, 0.42, 0.18] },
+    ],
   },
   'hog-rider': {
     url: '/assets/models/hog-rider.glb',
