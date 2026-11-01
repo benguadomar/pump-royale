@@ -1371,17 +1371,6 @@ button {
   text-align: right;
 }
 
-/* lobby top row */
-.wallet-btn {
-  height: 40px;
-  font-size: 15px;
-  padding: 0 14px;
-}
-.wallet-btn .svg-icon {
-  font-size: 18px;
-  color: #b18cff;
-}
-
 .live-ticker {
   position: absolute;
   top: 14px;
@@ -3135,20 +3124,85 @@ button.res-pill:hover {
   gap: 16px;
   flex-wrap: wrap;
 }
-.account-out {
-  font-size: 13px;
-}
-.account-out a {
-  color: var(--gold-1);
-}
-.wallet-login {
-  background: linear-gradient(180deg, #8b6cff, #5a3fd6);
-}
 .small-btn {
   height: 30px;
   padding: 0 12px;
   font-size: 13px;
   align-self: flex-start;
+}
+
+/* ---------------------------------------------------------------- login gate */
+
+.login-gate {
+  z-index: 60;
+  background: rgba(8, 10, 18, 0.45);
+}
+.login-modal {
+  width: 380px;
+  gap: 10px;
+  align-items: stretch;
+  padding: 18px 24px 20px;
+}
+.login-logo {
+  width: 210px;
+  align-self: center;
+  margin: -4px 0 2px;
+  filter: drop-shadow(0 4px 4px rgba(0, 0, 0, 0.45));
+}
+.login-tabs {
+  display: flex;
+  gap: 8px;
+}
+.login-tabs .btn {
+  flex: 1;
+}
+.login-input {
+  height: 44px;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 17px;
+  color: #fff3d6;
+  background: #1a0f07;
+  border: 2px solid #4a2a12;
+  border-radius: 10px;
+  outline: none;
+}
+.login-input:focus {
+  border-color: var(--gold-1);
+}
+.login-input[hidden] {
+  display: none;
+}
+.login-hint,
+.login-error {
+  min-height: 0;
+  font-size: 13px;
+  font-weight: 800;
+}
+.login-hint:empty,
+.login-error:empty {
+  display: none;
+}
+.login-hint {
+  margin-top: -4px;
+  color: var(--text-dim);
+}
+.login-hint.ok {
+  color: #7fe07a;
+}
+.login-hint.bad,
+.login-error {
+  color: #ff8a7a;
+}
+.login-submit {
+  height: 50px;
+  font-size: 22px;
+  margin-top: 4px;
+}
+.login-note {
+  margin: 2px 0 0;
+  font-size: 12px;
+  text-align: center;
 }
 
 /* ---------------------------------------------------------------- clans */

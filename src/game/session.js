@@ -1,4 +1,4 @@
-import { BattleSim, randomDeck } from '../sim/sim.js';
+import { BattleSim, randomDeck, rng } from '../sim/sim.js';
 import { BattleAI } from '../sim/ai.js';
 import { decodeSnapshot, encodeSnapshot, eventFor, SnapshotDecoder } from '../sim/snapshot.js';
 import { CARD_BY_ID } from '../data/cards.js';
@@ -93,6 +93,33 @@ export class LocalSession {
   }
 
   destroy() {}
+}
+
+/**
+ * Lobby background: two AIs fight on the arena behind the menus. Each round is seeded, so
+ * it is the same deterministic simulation as a real match, just with nobody at the controls.
+ */
+export class DemoSession {
+  constructor(round = 1) {
+    this.mode = 'demo';
+    const seed = (Math.imul(round, 0x9e3779b1) ^ 0x5eed) >>> 0;
+    const rand = rng(seed);
+    this.sim = new BattleSim([randomDeck(rand), randomDeck(rand)], { seed });
+    const ais = [0, 1].map((team) => new BattleAI(this.sim, team, { difficulty: 'goblin-stadium' }));
+    this.sim.onStep = (dt) => ais.forEach((ai) => ai.update(dt));
+  }
+
+  update(dt) {
+    this.sim.advance(Math.min(dt, 0.1));
+  }
+
+  view() {
+    return { over: this.sim.over, ents: this.sim.entities };
+  }
+
+  drainEvents() {
+    return this.sim.drainEvents();
+  }
 }
 
 /**

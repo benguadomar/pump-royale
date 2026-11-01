@@ -1,43 +1,15 @@
-import { h, img, icon, dateShort } from './dom.js';
+import { h, img, dateShort } from './dom.js';
 import { openModal, closeModal } from './modal.js';
 import { sfx } from '../audio.js';
-import { state, renameOnce } from '../state.js';
+import { state } from '../state.js';
 import { net } from '../net.js';
 import { CARD_BY_ID, cardImg } from '../data/cards.js';
 import { kingLevel, towerLevel, XP_LEVELS, leagueFor } from '../data/economy.js';
 import { accountSection } from './account.js';
 
 export function openProfile({ onReplay } = {}) {
-  const nameRow = h('div', {});
-  const note = h('div', { class: 'profile-note' });
-
-  const renderName = (editing = false) => {
-    note.textContent = state.nameLocked ? 'Saved on this device' : 'You can change your name once — choose wisely!';
-    if (!editing) {
-      nameRow.replaceChildren(
-        h(
-          'div',
-          { class: 'profile-name' },
-          state.name,
-          !state.nameLocked && h('button', { class: 'btn', title: 'Change name (once)', onclick: () => (sfx.click(), renderName(true)) }, icon('pencil')),
-        ),
-      );
-      return;
-    }
-    const input = h('input', { value: state.name, maxLength: 16, onkeydown: (e) => (e.stopPropagation(), e.key === 'Enter' && confirm()) });
-    const confirm = () => {
-      const prev = state.name;
-      if (input.value.trim() && input.value.trim() !== prev && renameOnce(input.value)) {
-        net.send({ t: 'rename', name: state.name });
-      }
-      renderName(false);
-    };
-    nameRow.replaceChildren(
-      h('div', { class: 'name-edit' }, input, h('button', { class: 'btn gold', onclick: confirm }, 'Save'), h('button', { class: 'btn', onclick: () => renderName(false) }, 'Cancel')),
-    );
-    setTimeout(() => input.select());
-  };
-  renderName();
+  const nameRow = h('div', { class: 'profile-name' }, state.name);
+  const note = h('div', { class: 'profile-note' }, 'Your unique username');
 
   // Server profile when connected (verified results); local stats as an offline fallback.
   const p = net.profile;

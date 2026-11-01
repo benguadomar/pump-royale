@@ -24,24 +24,15 @@ function detectCountry() {
 }
 const isValidDeck = (d) => Array.isArray(d) && d.length === 8 && new Set(d).size === 8 && d.every((id) => CARD_BY_ID[id]);
 
-// A magic-link sign-in lands on /?session=<token>: adopt it (the server tells us the account id).
-const params = new URLSearchParams(location.search);
-const landedSession = params.get('session');
-if (landedSession) {
-  params.delete('session');
-  history.replaceState(null, '', `${location.pathname}${params.size ? `?${params}` : ''}`);
-}
-
 export const state = {
-  id: landedSession ? '' : saved.id || crypto.randomUUID(),
+  id: saved.id || crypto.randomUUID(),
   /** Signed session (JWT) from the server; it, not the id, proves who we are. */
-  token: landedSession ?? saved.token ?? null,
+  token: saved.token ?? null,
   isReturning: Boolean(saved.id),
-  name: saved.name || `Player${Math.floor(1000 + Math.random() * 9000)}`,
-  nameLocked: Boolean(saved.nameLocked),
+  /** The account's unique username once logged in. */
+  name: saved.name || 'Player',
   deck: isValidDeck(saved.deck) ? saved.deck : [...DEFAULT_DECK],
   country: detectCountry(),
-  wallet: saved.wallet ?? null,
   settings: { volume: 0.25, music: 0.35, muted: false, graphics: 'high', ...saved.settings },
   stats: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, ...saved.stats },
   history: Array.isArray(saved.history) ? saved.history : [],
@@ -56,20 +47,9 @@ export function onStateChange(fn) {
 }
 
 export function save() {
-  const { id, token, name, nameLocked, deck, settings, stats, history, wallet, trophies, arena } = state;
-  localStorage.setItem(KEY, JSON.stringify({ id, token, name, nameLocked, deck, settings, stats, history, wallet, trophies, arena }));
+  const { id, token, name, deck, settings, stats, history, trophies, arena } = state;
+  localStorage.setItem(KEY, JSON.stringify({ id, token, name, deck, settings, stats, history, trophies, arena }));
   for (const fn of listeners) fn(state);
-}
-
-/** The name can be changed exactly once; after that it stays locked on this device. */
-export function renameOnce(name) {
-  if (state.nameLocked) return false;
-  const clean = name.replace(/[^\p{L}\p{N}_\- .]/gu, '').trim().slice(0, 16);
-  if (!clean) return false;
-  state.name = clean;
-  state.nameLocked = true;
-  save();
-  return true;
 }
 
 export function recordMatch({ result, myCrowns, enemyCrowns, opponent = 'AI', mode = 'ai' }) {

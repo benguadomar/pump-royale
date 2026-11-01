@@ -1,7 +1,7 @@
 import './styles.css';
 import { Engine } from './render/engine.js';
 import { BattleView } from './render/battleView.js';
-import { LocalSession, OnlineSession, ReplaySession } from './game/session.js';
+import { LocalSession, OnlineSession, ReplaySession, DemoSession } from './game/session.js';
 import { HAS_PNG } from './data/cards.js';
 import { generateCardArt } from './render/cardArt.js';
 import { loadTowerModels } from './render/models.js';
@@ -17,11 +17,15 @@ import { createBattleHud, showResult } from './ui/battleHud.js';
 import { findMatch, showVersus, openBattleMenu } from './ui/matchmaking.js';
 import { closeModal } from './ui/modal.js';
 import { toastMsg } from './ui/widgets.js';
+import { initLoginGate } from './ui/account.js';
 
 const DESIGN_W = 1366;
 const DESIGN_H = 768;
 const MIN_LOADING_MS = 2200;
 const RESULT_DELAY_MS = 1600;
+/** Lobby towers are drawn a bit smaller than in battle. */
+const LOBBY_TOWER_SCALE = 0.8;
+const DEMO_REST_S = 4;
 // Screen space (design px) the battle HUD occupies; the arena camera fits inside the rest.
 const BATTLE_INSETS = { top: 12, bottom: 150, side: 300 };
 
@@ -135,9 +139,35 @@ async function boot() {
   const chat = createChat();
   let lobby = null;
 
+  // Behind the lobby menus two AIs keep fighting; a new round starts a few seconds after one ends.
+  let demo = null;
+  let demoRound = Math.floor(Math.random() * 1e6);
+  const startDemo = () => {
+    if (demo) return;
+    const newRound = () => ({ session: new DemoSession(++demoRound), view: new BattleView(engine, { quiet: true, towerScale: LOBBY_TOWER_SCALE }), overAt: null });
+    let round = newRound();
+    const unsub = engine.onUpdate((dt, t) => {
+      round.session.update(dt);
+      const v = round.session.view();
+      round.view.update(v, round.session.drainEvents(), dt, t);
+      if (v.over) round.overAt ??= t;
+      if (round.overAt != null && t - round.overAt > DEMO_REST_S) {
+        round.view.destroy();
+        round = newRound();
+      }
+    });
+    demo = {
+      stop() {
+        unsub();
+        round.view.destroy();
+        demo = null;
+      },
+    };
+  };
+
   const enterLobby = () => {
     chat.setGame(null);
-    engine.world.showLobbyTowers(true);
+    startDemo();
     engine.setMode('lobby');
     playMusic('lobby');
     lobby = createLobby({ engine, chat, onPlay: startAi, onOnline: openOnline, onReplay: watchReplay });
@@ -212,7 +242,7 @@ async function boot() {
   /** Runs one match (either mode) from first frame to the results screen. */
   function startBattle(session) {
     leaveLobby();
-    engine.world.showLobbyTowers(false);
+    demo?.stop();
     engine.setMode('battle');
     const arena = ARENA_BY_ID[session.arenaId] ?? currentArena();
     engine.setArena(arena);
@@ -352,18 +382,30 @@ async function boot() {
   }
 
   enterLobby();
-  // Invite links: /?friend=CODE joins that friendly battle once connected.
+  // Invite links: /?friend=CODE joins that friendly battle once logged in.
   const params = new URLSearchParams(location.search);
   const friendCode = params.get('friend');
-  const auth = params.get('auth');
-  if (friendCode || auth) {
+  if (friendCode) {
     params.delete('friend');
-    params.delete('auth');
     history.replaceState(null, '', `${location.pathname}${params.size ? `?${params}` : ''}`);
   }
-  if (friendCode) startOnline({ kind: 'friendly-join', code: friendCode.toUpperCase().slice(0, 6) });
-  if (auth === 'expired') toastMsg('That sign-in link expired — request a new one');
-  if (auth === 'email') net.on('session', (m) => m.account?.email && toastMsg(`Signed in as ${m.account.email}`));
+  let invited = !friendCode;
+  const loggedIn = () => net.account && !net.account.guest;
+  const joinInvite = () => {
+    if (invited || !loggedIn()) return;
+    invited = true;
+    startOnline({ kind: 'friendly-join', code: friendCode.toUpperCase().slice(0, 6) });
+  };
+  net.on('session', joinInvite);
+  joinInvite();
+  // Playing needs an account: the sign-up / log-in form sits over the lobby until then.
+  initLoginGate(appEl, () => {
+    toastMsg(`Welcome, ${state.name}!`);
+    if (lobby) {
+      leaveLobby();
+      enterLobby();
+    }
+  });
   clearInterval(lineTimer);
   barFill.style.width = '100%';
   loading.classList.add('done');

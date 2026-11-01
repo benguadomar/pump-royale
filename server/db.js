@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import ws from 'ws';
 import { Pool, neonConfig } from '@neondatabase/serverless';
 import { log } from './log.js';
+import { usernameKey } from './auth.js';
 import { CARD_BY_ID } from '../src/data/cards.js';
 import { SIM_VERSION } from '../src/sim/constants.js';
 
@@ -14,6 +15,7 @@ const CHAT_FILE = path.join(DATA_DIR, 'chat.json');
 const PROFILE_FILE = path.join(DATA_DIR, 'profiles.json');
 const REPLAY_FILE = path.join(DATA_DIR, 'replays.json');
 const DOCS_FILE = path.join(DATA_DIR, 'docs.json');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const PUBLIC_REPLAYS = 30;
 const REPLAYS_PER_PLAYER = 20;
 const LEADERBOARD_SIZE = 10;
@@ -63,6 +65,16 @@ CREATE TABLE IF NOT EXISTS docs (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (kind, id)
 );
+-- Logins. username_key is the lower-cased name: the UNIQUE index makes duplicate usernames
+-- impossible even if two sign-ups race. Only scrypt hashes are stored, never passwords.
+CREATE TABLE IF NOT EXISTS users (
+  id            TEXT PRIMARY KEY,
+  username      TEXT NOT NULL,
+  username_key  TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_login    TIMESTAMPTZ
+);
 `;
 
 /** Replays recorded under older rules, or with retired cards, can no longer be re-simulated; they are hidden. */
@@ -82,6 +94,7 @@ export class Store {
     this.profiles = {};
     this.replays = {};
     this.docs = { account: {}, clan: {}, tv: {} };
+    this.users = new Map();
     const url = process.env.DATABASE_URL;
     if (url) {
       neonConfig.webSocketConstructor = ws;
@@ -108,6 +121,8 @@ export class Store {
       for (const r of profiles.rows) this.profiles[r.id] = r.data;
       const docs = await this.pool.query('SELECT kind, id, data FROM docs');
       for (const r of docs.rows) (this.docs[r.kind] ??= {})[r.id] = r.data;
+      const users = await this.pool.query('SELECT id, username, password_hash, created_at FROM users');
+      for (const r of users.rows) this.indexUser({ id: r.id, username: r.username, hash: r.password_hash, created: new Date(r.created_at).getTime() });
       this.kind = 'neon';
     } else {
       try {
@@ -126,11 +141,11 @@ export class Store {
       try {
         Object.assign(this.docs, JSON.parse(fs.readFileSync(DOCS_FILE, 'utf8')));
       } catch {}
+      try {
+        for (const u of JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'))) this.indexUser(u);
+      } catch {}
       this.kind = 'json';
     }
-    this.byEmail = new Map();
-    this.byWallet = new Map();
-    for (const a of Object.values(this.docs.account)) this.indexAccount(a);
   }
 
   // ---------------------------------------------------------------- documents
@@ -159,26 +174,49 @@ export class Store {
 
   // ---------------------------------------------------------------- accounts
 
-  indexAccount(a) {
-    if (a.email) this.byEmail.set(a.email, a.id);
-    if (a.wallet) this.byWallet.set(a.wallet, a.id);
-  }
-
   account(id) {
-    return this.doc('account', id);
-  }
-
-  accountByEmail(email) {
-    return this.account(this.byEmail.get(email));
-  }
-
-  accountByWallet(wallet) {
-    return this.account(this.byWallet.get(wallet));
+    return id ? this.doc('account', id) : null;
   }
 
   saveAccount(a) {
-    this.indexAccount(a);
     this.saveDoc('account', a.id, a);
+  }
+
+  // ---------------------------------------------------------------- users (username + password hash)
+
+  indexUser(u) {
+    (this.users ??= new Map()).set(usernameKey(u.username), u);
+  }
+
+  userByName(name) {
+    return typeof name === 'string' ? (this.users?.get(usernameKey(name)) ?? null) : null;
+  }
+
+  /**
+   * Claims the username; false if it is taken. The in-memory claim is synchronous so two
+   * sign-ups racing on this server cannot both pass, and Postgres' UNIQUE index backs it up.
+   */
+  async createUser(u) {
+    if (this.userByName(u.username)) return false;
+    this.indexUser(u);
+    if (!this.pool) {
+      this.scheduleFileSave();
+      return true;
+    }
+    try {
+      await this.pool.query('INSERT INTO users (id, username, username_key, password_hash) VALUES ($1, $2, $3, $4)', [u.id, u.username, usernameKey(u.username), u.hash]);
+      return true;
+    } catch (e) {
+      this.users.delete(usernameKey(u.username));
+      if (e.code === '23505') return false;
+      throw e;
+    }
+  }
+
+  touchUser(u) {
+    u.lastLogin = Date.now();
+    if (!this.pool) return this.scheduleFileSave();
+    this.pool.query('UPDATE users SET last_login = now() WHERE id = $1', [u.id]).catch((e) => log.error('user touch', { err: e.message }));
   }
 
   // ---------------------------------------------------------------- public replays (TV)
@@ -212,7 +250,7 @@ export class Store {
   }
 
   logBoot() {
-    log.info('storage ready', { kind: this.kind, players: Object.keys(this.players).length, accounts: Object.keys(this.docs.account).length, clans: Object.keys(this.docs.clan).length });
+    log.info('storage ready', { kind: this.kind, players: Object.keys(this.players).length, accounts: Object.keys(this.docs.account).length, users: this.users.size, clans: Object.keys(this.docs.clan).length });
   }
 
   has(id) {
@@ -331,6 +369,8 @@ export class Store {
       fs.writeFile(PROFILE_FILE, JSON.stringify(this.profiles), () => {});
       fs.writeFile(REPLAY_FILE, JSON.stringify(this.replays), () => {});
       fs.writeFile(DOCS_FILE, JSON.stringify(this.docs), () => {});
+      // Owner-only file permissions: password hashes are not readable by other users on the machine.
+      fs.writeFile(USERS_FILE, JSON.stringify([...(this.users?.values() ?? [])]), { mode: 0o600 }, () => {});
     }, 1000);
   }
 }

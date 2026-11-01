@@ -16,7 +16,7 @@ export const net = {
   leaderboard: { towers: [], cards: [], wins: [] },
   /** Server-owned progression (trophies, currencies, cards, chests...). Read-only here. */
   profile: null,
-  /** { id, email, wallet, guest } once the server accepted our session. */
+  /** { id, username, guest } once the server accepted our session; guests must log in to play. */
   account: null,
   clan: null,
 
@@ -49,7 +49,13 @@ export const net = {
   },
 
   connect,
+  /** Re-introduces this connection after the session token changed (log in / sign up). */
+  hello,
 };
+
+function hello() {
+  net.send({ t: 'hello', token: state.token, id: state.id, country: state.country });
+}
 
 function emit(type, data) {
   for (const fn of handlers[type] ?? []) fn(data);
@@ -61,7 +67,7 @@ function connect() {
 
   ws.onopen = () => {
     net.connected = true;
-    net.send({ t: 'hello', token: state.token, id: state.id, name: state.name, country: state.country });
+    hello();
     sendPing();
     clearInterval(pingTimer);
     pingTimer = setInterval(sendPing, PING_INTERVAL_MS);
@@ -149,7 +155,7 @@ function adoptSession(msg) {
   const switched = state.id && state.id !== msg.account.id;
   state.token = msg.token;
   state.id = msg.account.id;
-  if (msg.name) state.name = msg.name;
+  if (msg.account.username) state.name = msg.account.username;
   save();
   net.account = msg.account;
   emit('session', msg);

@@ -19,6 +19,8 @@ const DEATH_STYLE = { goblin: 'spin', giant: 'thud', pekka: 'thud', 'hog-rider':
 /** Footfall dust size for heavy walkers, and the tiles walked between steps. */
 const FOOTFALL = { giant: [1.5, 0.55], pekka: [1.5, 0.5], 'hog-rider': [1.1, 0.45], barbarian: [0.7, 0.4] };
 
+const SILENT = new Proxy({}, { get: () => () => {} });
+
 const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const _v = new THREE.Vector3();
 
@@ -28,10 +30,14 @@ const _v = new THREE.Vector3();
  * reacts to `events` with animations, effects and sounds.
  */
 export class BattleView {
-  constructor(engine, { onEvent } = {}) {
+  /** `quiet`: no sounds, camera shake or damage numbers (the lobby background fight). */
+  constructor(engine, { onEvent, quiet = false, towerScale = 1 } = {}) {
     this.engine = engine;
     this.fx = engine.fx;
     this.onEvent = onEvent ?? (() => {});
+    this.quiet = quiet;
+    this.sfx = quiet ? SILENT : sfx;
+    this.towerScale = towerScale;
     this.group = new THREE.Group();
     engine.scene.add(this.group);
     this.visuals = new Map();
@@ -158,6 +164,7 @@ export class BattleView {
     if (e.kind === 'tower') {
       const obj = makeTowerObject(e.towerKind, e.team);
       obj.position.copy(tileToWorld(e.x, e.y));
+      obj.scale.setScalar(this.towerScale);
       const plate = this.makeTowerPlate(e.team, e.maxHp);
       const sculptTop = obj.userData.crew?.style === 'sculpt' ? obj.userData.crew.height : null;
       plate.sprite.position.y = sculptTop ? sculptTop + 1.1 : e.towerKind === 'king' ? 6.3 : 5.5;
@@ -278,8 +285,8 @@ export class BattleView {
         const p = v.obj.position;
         this.fx.shockwave(p, [0.85, 0.75, 0.6], 2.6 + v.card.radius * 2);
         this.fx.smoke({ x: p.x, y: 0.3, z: p.z }, 8, 0.8, 1.1);
-        this.engine.shake(0.22);
-        sfx.thud();
+        this.shake(0.22);
+        this.sfx.thud();
       }
       if (v.deathT > DEATH_TIME) {
         this.fx.smoke({ x: v.obj.position.x, y: 0.35, z: v.obj.position.z }, 4, 0.3, 0.7);
@@ -349,8 +356,8 @@ export class BattleView {
         if (!i) mesh.scale.setScalar(0.2);
         this.addDebris(mesh, { x: p.x, y: 0.6 + Math.random() * 0.4, z: p.z }, 2.5, 4, 1.6);
       }
-      sfx.bones();
-    } else if (DEATH_STYLE[v.card.id] !== 'thud') sfx.death();
+      this.sfx.bones();
+    } else if (DEATH_STYLE[v.card.id] !== 'thud') this.sfx.death();
   }
 
   updateTower(v, e, dt, t) {
@@ -425,7 +432,7 @@ export class BattleView {
         v.landed = true;
         this.fx.shockwave(pos, [0.95, 0.9, 0.8], 1.2 + v.card.radius * 1.6);
         this.fx.smoke({ x: pos.x, y: 0.2, z: pos.z }, 4, 0.45, 0.6);
-        sfx.land();
+        this.sfx.land();
       }
     } else if (v.blob.scale.x !== v.blobSize) v.blob.scale.setScalar(v.blobSize);
 
@@ -486,8 +493,8 @@ export class BattleView {
       this.addDebris(mesh, { x: p.x + (Math.random() - 0.5) * half * 2, y: top + 0.2, z: p.z + (Math.random() - 0.5) * half * 2 }, 2, 2.5, 2.5);
     }
     this.fx.smoke({ x: p.x, y: top, z: p.z }, 4 + stage * 2, 1.2, 1.0);
-    this.engine.shake(0.1 + stage * 0.05);
-    sfx.crack();
+    this.shake(0.1 + stage * 0.05);
+    this.sfx.crack();
     if (stage === 2) {
       // Badly damaged towers keep smouldering until they fall.
       const smoulder = () => !v.dead && this.fx.spawn('smoke', { x: p.x + (Math.random() - 0.5), y: top, z: p.z + (Math.random() - 0.5) }, { size: 0.8, life: 1.6, vel: [0.2, 1.1, 0], grow: 0.9, tint: [0.55, 0.55, 0.55] });
@@ -581,7 +588,7 @@ export class BattleView {
 
   /** Pooled DOM number above an entity; negative values are heals. */
   showNumber(v, amount) {
-    if (this.numLayer.childElementCount > 40) return;
+    if (this.quiet || this.numLayer.childElementCount > 40) return;
     const p = v.obj.position;
     const h = v.kind === 'tower' ? (v.towerKind === 'king' ? 5.2 : 4.6) : (v.model?.height ?? 1.4) + 0.2;
     _v.set(p.x + (Math.random() - 0.5) * 0.5, h, p.z).project(this.engine.camera);
@@ -599,9 +606,13 @@ export class BattleView {
     }, 900);
   }
 
+  shake(amount) {
+    if (!this.quiet) this.engine.shake(amount);
+  }
+
   /** Camera punch when a tower takes a hit; king towers kick harder. */
   impactCamera(v) {
-    if (v.kind === 'tower') this.engine.shake(v.towerKind === 'king' ? 0.12 : 0.05);
+    if (v.kind === 'tower') this.shake(v.towerKind === 'king' ? 0.12 : 0.05);
   }
 
   hitFlash(id) {
@@ -627,18 +638,18 @@ export class BattleView {
         const p = tileToWorld(ev.x, ev.y);
         this.fx.shockwave(p, [1, 1, 1], 3.4);
         this.fx.sparks({ x: p.x, y: 0.3, z: p.z }, 8, TEAM_RGB[ev.team], 3);
-        if (ev.team === 0) sfx.deploy();
-        else sfx.deployEnemy();
+        if (ev.team === 0) this.sfx.deploy();
+        else this.sfx.deployEnemy();
         break;
       }
       case 'shot': {
         const src = this.attackerAct(ev);
         this.spawnProjectile(ev, src);
-        if (ev.kind === 'arrow' || ev.kind === 'bolt') sfx.bow();
-        else if (ev.kind === 'fireball' || ev.kind === 'dragonfire') sfx.fireball();
-        else if (ev.kind === 'cannonball') sfx.cannon();
-        else if (ev.kind === 'bullet') sfx.musket();
-        else sfx.bombThrow();
+        if (ev.kind === 'arrow' || ev.kind === 'bolt') this.sfx.bow();
+        else if (ev.kind === 'fireball' || ev.kind === 'dragonfire') this.sfx.fireball();
+        else if (ev.kind === 'cannonball') this.sfx.cannon();
+        else if (ev.kind === 'bullet') this.sfx.musket();
+        else this.sfx.bombThrow();
         break;
       }
       case 'spell': {
@@ -646,7 +657,7 @@ export class BattleView {
         this.addZone(ev.x, ev.y, ev.radius, this.mat.spellRing, Math.max(0.35, ev.flight + 0.1));
         this.zones.at(-1).mesh.material.color.setHex(ev.team === 0 ? 0x9fd0ff : 0xff9f9f);
         if (ev.flight > 0) this.spawnSpellProjectile(ev);
-        sfx.spellCast();
+        this.sfx.spellCast();
         break;
       }
       case 'spellHit':
@@ -656,10 +667,10 @@ export class BattleView {
         this.showBeam(ev);
         break;
       case 'reveal':
-        sfx.reveal(ev.up);
+        this.sfx.reveal(ev.up);
         break;
       case 'charge':
-        sfx.charge();
+        this.sfx.charge();
         break;
       case 'melee': {
         const src = this.attackerAct(ev);
@@ -675,17 +686,17 @@ export class BattleView {
         if (src && HEAVY.has(src.card?.id)) {
           src.stop = HIT_STOP;
           if (v && v.kind !== 'tower') v.stop = HIT_STOP;
-          this.engine.shake(0.06);
-          sfx.heavy();
-        } else sfx.sword();
+          this.shake(0.06);
+          this.sfx.heavy();
+        } else this.sfx.sword();
         break;
       }
       case 'hit': {
         const p = tileToWorld(ev.x, ev.y);
         if (ev.splash > 0) {
           this.fx.explosion(p, ev.splash, ev.kind);
-          sfx.boom();
-          this.engine.shake(0.12);
+          this.sfx.boom();
+          this.shake(0.12);
         } else if (ev.kind === 'cannonball') {
           this.fx.smoke({ x: p.x, y: 0.6, z: p.z }, 3, 0.3, 0.7);
           this.fx.impact({ x: p.x, y: 0.8, z: p.z }, 0, 0, 0.6, [1, 0.85, 0.6]);
@@ -703,18 +714,18 @@ export class BattleView {
         break;
       }
       case 'tower':
-        this.engine.shake(1.25);
+        this.shake(1.25);
         this.lastTowerAt = performance.now();
         // Knocking out a King Tower wins the match: savour it in slow motion.
         if (ev.kind === 'king') this.engine.slowMo(0.6, 0.3);
-        sfx.tower();
-        sfx.crumble();
+        this.sfx.tower();
+        this.sfx.crumble();
         break;
       case 'end':
         if (performance.now() - this.lastTowerAt < 300) this.engine.slowMo(0.6, 0.3);
         break;
       case 'overtime':
-        sfx.horn();
+        this.sfx.horn();
         break;
     }
     this.onEvent(ev);
@@ -831,8 +842,8 @@ export class BattleView {
     const p = dst.obj.position;
     const h = dst.kind === 'tower' ? 2.4 : (dst.model?.height ?? 1.2) * 0.55;
     this.fx.sparks({ x: p.x, y: h, z: p.z }, ev.kind === 'tesla' ? 6 : 2, ev.kind === 'tesla' ? [0.6, 0.95, 1] : [1, 0.6, 0.2], 3);
-    if (ev.kind === 'tesla') sfx.teslaZap();
-    else sfx.beam(ev.stage);
+    if (ev.kind === 'tesla') this.sfx.teslaZap();
+    else this.sfx.beam(ev.stage);
   }
 
   updateBeams(dt) {
@@ -887,8 +898,8 @@ export class BattleView {
       case 'fireball':
         this.fx.explosion(p, r * 0.8, 'fireball');
         this.fx.shockwave(p, [1, 0.55, 0.2], r * 2.6);
-        this.engine.shake(0.35);
-        sfx.boom();
+        this.shake(0.35);
+        this.sfx.boom();
         break;
       case 'arrows':
         for (let i = 0; i < 26; i++) {
@@ -896,7 +907,7 @@ export class BattleView {
           const d = Math.sqrt(Math.random()) * r;
           this.fx.hitPuff({ x: p.x + Math.cos(a) * d, y: 0.3, z: p.z + Math.sin(a) * d }, [1, 0.9, 0.7]);
         }
-        sfx.arrows();
+        this.sfx.arrows();
         break;
       case 'zap':
         for (let i = 0; i < 4; i++) {
@@ -911,8 +922,8 @@ export class BattleView {
         }
         this.fx.shockwave(p, [0.6, 0.95, 1], r * 2.2);
         this.fx.sparks({ x: p.x, y: 0.5, z: p.z }, 20, [0.6, 0.95, 1], 6);
-        this.engine.shake(0.15);
-        sfx.zap();
+        this.shake(0.15);
+        this.sfx.zap();
         break;
       case 'freeze':
         this.addZone(ev.x, ev.y, r, this.mat.freezeZone, ev.duration);
@@ -922,12 +933,12 @@ export class BattleView {
           const d = Math.sqrt(Math.random()) * r;
           this.fx.spawn('glow', { x: p.x + Math.cos(a) * d, y: 0.2 + Math.random(), z: p.z + Math.sin(a) * d }, { size: 0.5, life: 1.2, vel: [0, 0.3, 0], tint: [0.75, 0.92, 1] });
         }
-        sfx.freeze();
+        this.sfx.freeze();
         break;
       case 'rage':
         this.addZone(ev.x, ev.y, r, this.mat.rageZone, ev.duration, true);
         this.fx.shockwave(p, [0.85, 0.35, 1], r * 2.2);
-        sfx.rage();
+        this.sfx.rage();
         break;
       case 'goblin-barrel':
         for (let i = 0; i < 8; i++) {
@@ -936,7 +947,7 @@ export class BattleView {
           this.addDebris(mesh, { x: p.x, y: 0.6, z: p.z }, 3, 3.5, 1.5);
         }
         this.fx.smoke({ x: p.x, y: 0.3, z: p.z }, 6, 0.6, 0.9);
-        sfx.barrel();
+        this.sfx.barrel();
         break;
     }
   }

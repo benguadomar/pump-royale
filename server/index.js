@@ -9,6 +9,8 @@ import { Economy } from './economy.js';
 import { Accounts } from './accounts.js';
 import { Clans } from './clans.js';
 import { log, captureError, sentryEnabled } from './log.js';
+import { usernameKey, usernameError } from './auth.js';
+import * as firewall from './firewall.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 8787;
@@ -72,7 +74,6 @@ const MIME = {
 };
 
 const json = (res, code, body) => res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify(body));
-const originOf = (req) => process.env.PUBLIC_URL ?? `${req.headers['x-forwarded-proto'] ?? 'http'}://${req.headers['x-forwarded-host'] ?? req.headers.host}`;
 
 function readBody(req) {
   return new Promise((resolve) => {
@@ -94,33 +95,31 @@ function readBody(req) {
   });
 }
 
-/** Tiny per-IP limiter for the HTTP API (magic links, client error reports). */
-const httpHits = new Map();
-function httpLimited(req, max) {
-  const ip = req.headers['fly-client-ip'] ?? req.socket.remoteAddress;
-  const now = Date.now();
-  const hit = httpHits.get(ip) ?? { n: 0, since: now };
-  if (now - hit.since > 60000) Object.assign(hit, { n: 0, since: now });
-  hit.n++;
-  httpHits.set(ip, hit);
-  if (httpHits.size > 5000) httpHits.clear();
-  return hit.n > max;
-}
+const AUTH_STATUS = { username: 400, password: 400, 'password-name': 400, taken: 409, credentials: 401 };
 
 async function api(req, res, urlPath, query) {
-  if (urlPath === '/api/auth/email' && req.method === 'POST') {
-    if (httpLimited(req, 5)) return json(res, 429, { error: 'rate' });
+  const ip = firewall.ipOf(req);
+  if (urlPath === '/api/auth/register' || urlPath === '/api/auth/login') {
+    if (!firewall.trustedPost(req)) return json(res, 403, { error: 'origin' });
+    const register = urlPath === '/api/auth/register';
+    if (!firewall.allow(ip, register ? 'register' : 'login')) return json(res, 429, { error: 'rate' });
     const body = await readBody(req);
-    const out = await accounts.requestEmail(body.email, body.token, originOf(req));
-    return json(res, out.error ? 400 : 200, out);
+    const key = usernameKey(String(body.username ?? '').trim());
+    if (!register && firewall.loginLocked(key)) return json(res, 423, { error: 'locked' });
+    const out = register ? await accounts.register(body.username, body.password, body.token) : await accounts.login(body.username, body.password);
+    if (!register) out.error === 'credentials' ? firewall.loginFailed(key, ip) : firewall.loginSucceeded(key);
+    if (out.error) return json(res, AUTH_STATUS[out.error] ?? 400, { error: out.error });
+    log.info(register ? 'register' : 'login', { account: out.account.id, ip });
+    return json(res, 200, out);
   }
-  if (urlPath === '/api/auth/verify') {
-    const session = accounts.verifyEmail(String(query.get('t') ?? ''));
-    res.writeHead(302, { Location: session ? `/?session=${encodeURIComponent(session.token)}&auth=email` : '/?auth=expired' }).end();
-    return;
+  if (urlPath === '/api/auth/available') {
+    if (!firewall.allow(ip, 'check')) return json(res, 429, { error: 'rate' });
+    const name = String(query.get('username') ?? '').trim();
+    const bad = usernameError(name);
+    return json(res, 200, { available: !bad && !store.userByName(name), error: bad });
   }
   if (urlPath === '/api/client-error' && req.method === 'POST') {
-    if (httpLimited(req, 20)) return json(res, 429, { error: 'rate' });
+    if (!firewall.allow(ip, 'api')) return json(res, 429, { error: 'rate' });
     const body = await readBody(req);
     const err = new Error(String(body.message ?? 'client error').slice(0, 300));
     const stack = String(body.stack ?? '').slice(0, 3000);
@@ -134,7 +133,14 @@ async function api(req, res, urlPath, query) {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || '/', 'http://x');
-  const urlPath = decodeURIComponent(url.pathname);
+  let urlPath;
+  try {
+    urlPath = decodeURIComponent(url.pathname);
+  } catch {
+    return res.writeHead(400).end();
+  }
+  firewall.secureHeaders(res);
+  if (firewall.banned(firewall.ipOf(req))) return res.writeHead(403).end();
   if (urlPath === '/healthz') {
     store
       .healthy()
@@ -238,6 +244,7 @@ function allow(ws) {
   if (++ws.strikes > MAX_STRIKES && !ws.flooded) {
     ws.flooded = true;
     log.warn('flood disconnect', { player: ws.player?.id });
+    firewall.strike(ws.ip, 'flood');
     ws.close(1008, 'rate limit');
   }
   return false;
@@ -246,11 +253,17 @@ function allow(ws) {
 function hello(ws, msg) {
   const out = accounts.resolve({ token: msg.token, id: msg.id });
   if (out.error) return send(ws, { t: 'auth-required' });
-  const id = out.account.id;
-  const name = cleanName(store.get(id)?.name ?? msg.name);
+  const account = out.account;
+  // Guests only get their session token: everything else needs a username + password login.
+  if (!account.username) {
+    detach(ws);
+    ws.player = null;
+    return send(ws, { t: 'session', token: out.token, account: accounts.view(account) });
+  }
+  const id = account.id;
   const country = cleanCountry(msg.country);
   const known = store.has(id);
-  store.upsert(id, known ? name : cleanName(msg.name), country);
+  store.upsert(id, cleanName(account.username), country);
   const alreadyConnected = sockets.has(id);
   detach(ws);
   ws.player = { id, name: store.get(id).name, country };
@@ -289,21 +302,6 @@ function handle(ws, msg) {
       broadcast({ t: 'chat', msg: entry });
       return;
     }
-    case 'rename': {
-      player.name = cleanName(msg.name);
-      store.upsert(id, player.name, player.country);
-      broadcastLeaderboard();
-      return;
-    }
-
-    // ---- accounts
-    case 'wallet-challenge':
-      return send(ws, { t: 'wallet-challenge', ...accounts.challenge() });
-    case 'wallet-login': {
-      const out = accounts.walletLogin(id, msg);
-      return send(ws, out.error ? { t: 'session', error: out.error } : { t: 'session', ...out, switched: out.account.id !== id });
-    }
-
     // ---- AI matches + economy
     case 'ai-start': {
       const m = economy.aiStart(id, msg.deck);
@@ -411,7 +409,10 @@ function handle(ws, msg) {
   }
 }
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+  const ip = firewall.ipOf(req);
+  if (!firewall.admitSocket(ip)) return ws.close(1008, 'blocked');
+  ws.ip = ip;
   ws.lastChat = 0;
   ws.tokens = BUCKET_SIZE;
   ws.refilled = performance.now();
@@ -434,6 +435,7 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
+    firewall.releaseSocket(ip);
     matchmaker.disconnected(ws);
     const id = ws.player?.id;
     detach(ws);
