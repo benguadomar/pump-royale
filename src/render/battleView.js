@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { uniform, uv, step, mix, color } from 'three/tsl';
 import { ARENA_W, ARENA_H, zoneAllows } from '../sim/constants.js';
 import { CARD_BY_ID, SPEEDS, TOWERS, isSpell } from '../data/cards.js';
 import { buildUnit, makeTowerObject, Animator, ghostify, flashMat, frozenMat, rageMat } from './models.js';
@@ -70,8 +71,6 @@ export class BattleView {
     this.mat = {
       blob: new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25, depthWrite: false }),
       ring: TEAM_COLOR.map((c) => new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.8, depthWrite: false })),
-      barBg: new THREE.SpriteNodeMaterial({ color: 0x1a0d05, depthTest: false }),
-      barFill: TEAM_COLOR.map((c) => new THREE.SpriteNodeMaterial({ color: c, depthTest: false })),
       arrow: new THREE.MeshStandardMaterial({ color: 0xffe9b0, emissive: 0xffc860, emissiveIntensity: 0.6 }),
       bomb: new THREE.MeshStandardMaterial({ color: 0x1d1d1f, roughness: 0.4 }),
       cannonball: new THREE.MeshStandardMaterial({ color: 0x33363c, roughness: 0.35, metalness: 0.5 }),
@@ -96,19 +95,24 @@ export class BattleView {
 
   // ------------------------------------------------------------- visuals
 
+  /**
+   * Unit health bar: one sprite whose shader paints the dark frame and the team fill, so the two
+   * can't drift apart (SpriteNodeMaterial mis-applies `Sprite.center`, which split the old two-sprite bar).
+   */
   makeBar(width, y, team) {
-    const bar = new THREE.Group();
-    const bg = new THREE.Sprite(this.mat.barBg);
-    bg.scale.set(width + 0.1, 0.22, 1);
-    const fill = new THREE.Sprite(this.mat.barFill[team]);
-    fill.center.set(0, 0.5);
-    fill.position.x = -width / 2;
-    fill.scale.set(width, 0.14, 1);
-    bg.renderOrder = 20;
-    fill.renderOrder = 21;
-    bar.add(bg, fill);
+    const w = width + 0.1;
+    const frac = uniform(1);
+    const inset = uniform(new THREE.Vector2(0.05 / w, 0.04 / 0.22));
+    const p = uv();
+    const fillEnd = inset.x.add(frac.mul(inset.x.mul(-2).add(1)));
+    const inside = step(inset.x, p.x).mul(step(p.x, fillEnd)).mul(step(inset.y, p.y)).mul(step(p.y, inset.y.oneMinus()));
+    const mat = new THREE.SpriteNodeMaterial({ depthTest: false });
+    mat.colorNode = mix(color(0x1a0d05), color(TEAM_COLOR[team]), inside);
+    const bar = new THREE.Sprite(mat);
+    bar.scale.set(w, 0.22, 1);
+    bar.renderOrder = 20;
     bar.position.y = y;
-    bar.userData = { fill, width };
+    bar.userData = { frac };
     return bar;
   }
 
@@ -293,6 +297,7 @@ export class BattleView {
       if (v.deathT > DEATH_TIME) {
         this.fx.smoke({ x: v.obj.position.x, y: 0.35, z: v.obj.position.z }, 4, 0.3, 0.7);
         this.group.remove(v.obj);
+        v.bar?.material.dispose();
         this.visuals.delete(id);
       }
     }
@@ -457,7 +462,7 @@ export class BattleView {
 
     const f = Math.max(0, Math.min(1, e.hp / e.maxHp));
     v.bar.visible = (f < 0.999 || e.kind === 'building') && v.sinkK < 0.5;
-    v.bar.userData.fill.scale.x = v.bar.userData.width * f;
+    v.bar.userData.frac.value = f;
   }
 
   /** Damage stages: cracks spread over the walls and chunks fall off at 66 % and 33 % hp. */
@@ -1126,7 +1131,7 @@ export class BattleView {
       if (o.isSprite && o.material.map instanceof THREE.CanvasTexture) {
         o.material.map.dispose();
         o.material.dispose();
-      }
+      } else if (o.isSprite && o.userData.frac) o.material.dispose();
     });
     this.preview?.ring.material.dispose();
     this.pendingRings?.forEach((r) => r.material.dispose());
