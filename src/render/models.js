@@ -982,9 +982,9 @@ function skinCrew(geometry, toPivot, height, rig) {
     v.fromBufferAttribute(pos, i).applyMatrix4(toPivot);
     const y = v.y / height;
     // The bow arm: everything held out in front of the body (hands, bow, arrow).
-    const arm = rig.armZ ? smoothstep(rig.armZ[0], rig.armZ[1], v.z) * smoothstep(rig.waist, rig.waist + 0.1, y) : 0;
+    const arm = rig.armZ ? smoothstep(rig.armZ[0], rig.armZ[1], v.z) * smoothstep(rig.waist, rig.waist + rig.blend * 2, y) : 0;
     const head = smoothstep(rig.neck - 0.06, rig.neck + 0.06, y) * (1 - arm);
-    const spine = smoothstep(rig.waist - 0.08, rig.waist + 0.08, y) * (1 - head - arm);
+    const spine = smoothstep(rig.waist - rig.blend, rig.waist + rig.blend, y) * (1 - head - arm);
     si.set([0, 1, 2, 3], i * 4);
     sw.set([1 - head - spine - arm, spine, head, arm], i * 4);
   }
@@ -993,8 +993,10 @@ function skinCrew(geometry, toPivot, height, rig) {
 }
 /** Bone heights as a fraction of the character's height, and the bow arm's depth band (measured on the sculpts). */
 const CREW_RIGS = {
-  king: { waist: 0.22, neck: 0.5 },
-  archer: { waist: 0.25, neck: 0.55, armZ: [0.09, 0.15], shoulder: 0.5 },
+  king: { waist: 0.22, neck: 0.5, blend: 0.08, maxYaw: 0.85, yaw: [0.55, 0, 0.35], look: 0.55 },
+  // Her waist bone sits on the battlements: everything inside the walls stays still, so turning never clips the stone.
+  // Only her head (turning about the centre of her hair) and her bow arm aim.
+  archer: { waist: 0.48, neck: 0.6, blend: 0.035, armZ: [0.09, 0.15], shoulder: 0.56, fixedBase: true, maxYaw: 0.55, yaw: [0, 0, 0.75], armYaw: 0.9, look: 0.25, headAtCentre: true },
 };
 
 /** Loads the sculpted towers (called during boot; procedural towers are the fallback). */
@@ -1020,7 +1022,10 @@ export async function loadTowerModels() {
         });
         const height = boxOf(k.pts).max.y;
         const rig = CREW_RIGS[crewName];
-        Object.assign(crew, { name: crewName, height, rig });
+        // Head pivot under the middle of the head/hair, so turning it does not sweep it sideways.
+        const headBox = boxOf(k.pts.filter((p) => p.y > rig.neck * height && p.z < (rig.armZ?.[0] ?? Infinity)));
+        const headXZ = rig.headAtCentre ? [(headBox.min.x + headBox.max.x) / 2, (headBox.min.z + headBox.max.z) / 2] : [0, 0];
+        Object.assign(crew, { name: crewName, height, rig, headXZ });
         if (cannon) {
           const c = pivotMesh(cannon, (pts) => {
             const minY = boxOf(pts).min.y;
@@ -1080,7 +1085,7 @@ function rigSculptKing(model, info) {
   const arm = new THREE.Bone();
   const { waist, neck, shoulder = neck } = info.rig;
   spine.position.y = waist * info.height;
-  head.position.y = (neck - waist) * info.height;
+  head.position.set(info.headXZ[0], (neck - waist) * info.height, info.headXZ[1]);
   arm.position.y = (shoulder - waist) * info.height;
   root.add(spine);
   spine.add(head, arm);
@@ -1131,7 +1136,8 @@ export class SculptKingAnimator {
     this.wake = Math.max(0, this.wake - dt * 1.6);
 
     // Turn toward the target the battle view steers `aim` at, clamped so nothing leaves the parapet.
-    const want = this.engaged && !asleep ? Math.max(-0.85, Math.min(0.85, wrapAngle(this.aim.rotation.y - this.facing))) : 0;
+    const rig = this.info.rig;
+    const want = this.engaged && !asleep ? Math.max(-rig.maxYaw, Math.min(rig.maxYaw, wrapAngle(this.aim.rotation.y - this.facing))) : 0;
     this.yaw += (want - this.yaw) * Math.min(1, dt * 6);
 
     // Recoil: back along the barrel, nose up, then spring home.
@@ -1147,18 +1153,18 @@ export class SculptKingAnimator {
       // Bow: draw back while the next shot comes up, kick up on release.
       const H = this.hitSpeed;
       const draw = this.engaged && this.since > H * 0.45 ? Math.min(1, (this.since - H * 0.45) / (H * 0.5)) : 0;
-      arm.rotation.set(-0.22 * k + draw * 0.12, draw * -0.1, 0);
+      arm.rotation.set(-0.22 * k + draw * 0.12, draw * -0.1 + this.yaw * (this.info.rig.armYaw ?? 0), 0);
       arm.position.z = -draw * 0.02 * this.info.height;
     }
     const breathe = Math.sin(t * (asleep ? 1.3 : 2.4) + this.seed);
     const hop = Math.sin(this.wake * Math.PI) * 0.08;
-    root.position.y = hop * this.info.height;
-    root.rotation.set(0, this.yaw * 0.55, 0);
-    root.scale.set(1, 1 + breathe * 0.015, 1);
+    root.position.y = rig.fixedBase ? 0 : hop * this.info.height;
+    root.rotation.set(0, this.yaw * rig.yaw[0], 0);
+    root.scale.set(1, rig.fixedBase ? 1 : 1 + breathe * 0.015, 1);
     // Blast pushes him back; asleep he slumps forward.
-    spine.rotation.set((asleep ? 0.18 : 0) - 0.14 * k + breathe * 0.02, Math.sin(t * 0.6 + this.seed) * 0.04, Math.sin(t * 0.9 + this.seed) * 0.03);
-    const look = this.engaged || asleep ? 0 : Math.sin(t * 0.45 + this.seed) * 0.55;
-    head.rotation.set(asleep ? 0.35 + breathe * 0.04 : -0.06 * k + Math.sin(t * 0.7 + this.seed) * 0.04, look + this.yaw * 0.35, 0);
+    spine.rotation.set((asleep ? 0.18 : 0) - 0.14 * k + breathe * 0.02, Math.sin(t * 0.6 + this.seed) * 0.04 + this.yaw * rig.yaw[1], Math.sin(t * 0.9 + this.seed) * 0.03);
+    const look = this.engaged || asleep ? 0 : Math.sin(t * 0.45 + this.seed) * rig.look;
+    head.rotation.set(asleep ? 0.35 + breathe * 0.04 : -0.06 * k + Math.sin(t * 0.7 + this.seed) * 0.04, look + this.yaw * rig.yaw[2], 0);
   }
 }
 
