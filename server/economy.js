@@ -8,7 +8,7 @@ import {
 } from '../src/data/economy.js';
 import { ReplayDriver } from '../src/sim/replay.js';
 import { randomDeck, rng } from '../src/sim/sim.js';
-import { arenaFor } from '../src/data/arenas.js';
+import { arenaFor, ARENA_BY_ID } from '../src/data/arenas.js';
 import { aiDifficulty } from '../src/sim/aiDifficulty.js';
 import { signResult } from './auth.js';
 import { SIM_VERSION } from '../src/sim/constants.js';
@@ -72,24 +72,27 @@ export class Economy {
   // ---------------------------------------------------------------- matches
 
   /** Starts a verified AI match: the server picks the seed and the bot's deck and levels. */
-  aiStart(id, deck) {
+  aiStart(id, deck, arenaId) {
     if (!isValidDeck(deck)) return { error: 'deck' };
     const p = this.profile(id);
     const seed = crypto.randomInt(1, 2 ** 31);
     const r = rng(seed ^ 0x5bd1e995);
     const aiDeck = randomDeck(r);
     const mine = this.levelsFor(p, deck);
-    const arena = arenaFor(p.trophies);
+    // Any unlocked arena may be chosen; its bot, and its rewards, come with it.
+    const picked = ARENA_BY_ID[arenaId];
+    const arena = picked && p.trophies >= picked.trophies ? picked : arenaFor(p.trophies);
     const difficulty = aiDifficulty(arena.id);
-    // The bot plays at the player's average card level so it stays a fair fight.
-    const avg = Math.round(deck.reduce((s, c) => s + mine.cards[c], 0) / deck.length);
-    const aiCards = Object.fromEntries(aiDeck.map((c) => [c, avg]));
+    // The bot plays at the player's average card level, plus its arena's bonus.
+    const avg = deck.reduce((s, c) => s + mine.cards[c], 0) / deck.length;
+    const aiLevel = Math.min(MAX_CARD_LEVEL, Math.round(avg) + (difficulty.levelBonus ?? 0));
+    const aiCards = Object.fromEntries(aiDeck.map((c) => [c, aiLevel]));
     const match = {
       matchId: crypto.randomUUID(),
       mode: 'ai',
       seed,
       decks: [deck, aiDeck],
-      levels: [mine.tower, mine.tower],
+      levels: [mine.tower, Math.min(MAX_CARD_LEVEL, mine.tower + (difficulty.levelBonus ?? 0))],
       cardLevels: [mine.cards, aiCards],
       oppName: AI_NAMES[seed % AI_NAMES.length],
       arenaId: arena.id,
@@ -129,7 +132,7 @@ export class Economy {
     const sim = new ReplayDriver(record).runToEnd();
     const r = sim.result(0);
     const p = this.profile(id);
-    const summary = applyMatch(p, { result: r.result, myCrowns: r.myCrowns, deck: match.decks[0], deployed: r.myDeployed, oppTrophies: p.trophies });
+    const summary = applyMatch(p, { result: r.result, myCrowns: r.myCrowns, deck: match.decks[0], deployed: r.myDeployed, oppTrophies: p.trophies, arenaId: match.arenaId });
     this.save(id, p);
     const signed = { match: matchId, mode: 'ai', seed: match.seed, players: id, winner: sim.winner ?? -1, crowns: `${r.myCrowns}-${r.enemyCrowns}`, ticks: sim.tick };
     signed.sig = signResult(signed);

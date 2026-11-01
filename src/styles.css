@@ -3763,3 +3763,17 @@ button.res-pill:hover {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* arena rewards */
+.arena-prize {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #ffd76a;
+}
+.reward-coin {
+  height: 18px;
+  vertical-align: -3px;
+  margin-right: 3px;
+}

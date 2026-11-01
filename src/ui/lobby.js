@@ -9,12 +9,24 @@ import { net } from '../net.js';
 import { state, save, currentArena } from '../state.js';
 import { ARENAS } from '../data/arenas.js';
 import { aiDifficulty } from '../sim/aiDifficulty.js';
+import { ARENA_WIN, arenaIndex, arenaTrophyFactor } from '../data/economy.js';
 import { resourceBar, chestSlots, questsBody } from './progress.js';
 import { openClan } from './clan.js';
 import { openDaily, dailyClaimable, showNotices } from './daily.js';
 import { openShop } from './shop.js';
 
 const X_URL = 'https://x.com/';
+/** "Win: 50 gold · 30 XP · better chests", plus a warning when it is below your own arena. */
+function arenaPrize(arena, i) {
+  const w = ARENA_WIN[i];
+  const top = arenaIndex(currentTopArena());
+  const factor = arenaTrophyFactor(i, top);
+  const parts = [`Win: ${w.gold} gold · ${w.xp} XP`, w.chestBoost && 'better chests'];
+  if (state.trophies >= arena.trophies && factor < 1) parts.push(factor ? 'half trophies' : 'no trophies');
+  return parts.filter(Boolean).join(' · ');
+}
+const currentTopArena = () => [...ARENAS].reverse().find((a) => state.trophies >= a.trophies)?.id ?? ARENAS[0].id;
+
 /** The daily calendar opens by itself at most once per page load. */
 let prompted = false;
 const MAX_FEED = 9;
@@ -153,7 +165,7 @@ export function createLobby({ engine, chat, onPlay, onOnline, onReplay }) {
       body: h(
         'div',
         { class: 'arena-list' },
-        ARENAS.map((a) => {
+        ARENAS.map((a, i) => {
           const locked = state.trophies < a.trophies;
           const swatch = h('div', { class: 'arena-swatch', style: { background: `linear-gradient(180deg, #${a.sky[0].toString(16).padStart(6, '0')}, #${a.grass[0].toString(16).padStart(6, '0')} 70%, #${a.path.toString(16).padStart(6, '0')})` } });
           return h(
@@ -176,6 +188,7 @@ export function createLobby({ engine, chat, onPlay, onOnline, onReplay }) {
               { class: 'arena-info' },
               h('b', {}, a.name),
               h('span', {}, locked ? `🔒 Unlocks at ${a.trophies} trophies` : `${a.id === active ? 'Selected' : 'Tap to fight here'} · AI: ${aiDifficulty(a.id).name}`),
+              h('small', { class: 'arena-prize' }, arenaPrize(a, i)),
             ),
           );
         }),

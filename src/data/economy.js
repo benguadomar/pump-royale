@@ -1,5 +1,5 @@
 import { CARDS, CARD_BY_ID } from './cards.js';
-import { ARENAS } from './arenas.js';
+import { ARENAS, arenaFor } from './arenas.js';
 
 // Progression rules shared by the server (which applies them) and the client (which
 // only displays them). Every function takes the profile and returns what changed.
@@ -95,6 +95,25 @@ export const QUEST_KINDS = [
 export const QUESTS_PER_DAY = 3;
 export const dayKey = (now = Date.now()) => new Date(now).toISOString().slice(0, 10);
 const DAY_MS = 24 * 3600 * 1000;
+
+// ------------------------------------------------------------------ arena rewards
+
+/**
+ * What a win is worth in each arena (same order as ARENAS). Higher arenas have harder bots,
+ * so they pay more gold and XP, and from Barbarian Bowl on every chest is one tier better.
+ */
+export const ARENA_WIN = [
+  { gold: 15, xp: 20, chestBoost: 0 },
+  { gold: 30, xp: 25, chestBoost: 0 },
+  { gold: 50, xp: 30, chestBoost: 1 },
+  { gold: 75, xp: 35, chestBoost: 1 },
+  { gold: 110, xp: 40, chestBoost: 1 },
+];
+const CHEST_ORDER = ['wooden', 'silver', 'gold', 'magical'];
+export const upgradeChest = (type, steps) => CHEST_ORDER[Math.min(CHEST_ORDER.length - 1, CHEST_ORDER.indexOf(type) + steps)];
+export const arenaIndex = (id) => Math.max(0, ARENAS.findIndex((a) => a.id === id));
+/** Trophies kept from a win in arena `at` when your own arena is `top`. */
+export const arenaTrophyFactor = (at, top) => (at >= top ? 1 : top - at === 1 ? 0.5 : 0);
 
 // ------------------------------------------------------------------ daily login reward
 
@@ -198,20 +217,28 @@ export function grant(p, reward) {
  * Returns the summary shown on the result screen.
  */
 export function applyMatch(p, stats) {
-  const delta = trophyDelta(stats.result, p.trophies, stats.oppTrophies ?? p.trophies);
+  const top = arenaIndex(arenaFor(p.trophies).id);
+  const at = stats.arenaId ? arenaIndex(stats.arenaId) : top;
+  const prize = ARENA_WIN[at];
+  const won = stats.result === 'win';
+  let delta = trophyDelta(stats.result, p.trophies, stats.oppTrophies ?? p.trophies);
+  // Wins below your own arena are worth less (half one arena down, nothing further); losses cost in full.
+  if (won) delta = Math.round(delta * arenaTrophyFactor(at, top));
   const before = p.trophies;
   p.trophies = Math.max(0, p.trophies + delta);
   p.bestTrophies = Math.max(p.bestTrophies, p.trophies);
-  p[stats.result === 'win' ? 'wins' : stats.result === 'loss' ? 'losses' : 'draws']++;
-  const xp = stats.result === 'win' ? 20 : 6;
+  p[won ? 'wins' : stats.result === 'loss' ? 'losses' : 'draws']++;
+  const xp = won ? prize.xp : 6 + at * 2;
   p.xp += xp;
-  const passXp = stats.myCrowns * 10 + (stats.result === 'win' ? 10 : 0);
+  const passXp = stats.myCrowns * 10 + (won ? 10 + at * 5 : 0);
   p.pass.xp += passXp;
+  const gold = won ? prize.gold : 0;
+  p.gold += gold;
 
   let chest = null;
   let chestLost = false;
-  if (stats.result === 'win') {
-    const type = CHEST_CYCLE[p.chestCycle % CHEST_CYCLE.length];
+  if (won) {
+    const type = upgradeChest(CHEST_CYCLE[p.chestCycle % CHEST_CYCLE.length], prize.chestBoost);
     const slot = p.chests.indexOf(null);
     if (slot >= 0) {
       p.chests[slot] = { type, unlockAt: null };
@@ -232,7 +259,7 @@ export function applyMatch(p, stats) {
 
   const arenasBefore = ARENAS.filter((a) => before >= a.trophies).length;
   const arenasAfter = ARENAS.filter((a) => p.trophies >= a.trophies).length;
-  return { trophies: p.trophies, delta: p.trophies - before, xp, passXp, chest, chestLost, newArena: arenasAfter > arenasBefore ? ARENAS[arenasAfter - 1].id : null };
+  return { trophies: p.trophies, delta: p.trophies - before, xp, passXp, gold, arena: ARENAS[at].id, reduced: won && at < top, chest, chestLost, newArena: arenasAfter > arenasBefore ? ARENAS[arenasAfter - 1].id : null };
 }
 
 /** Random card shards from a chest, weighted by rarity. */

@@ -430,7 +430,9 @@ function rewardsBody(summary) {
   const sign = summary.delta > 0 ? '+' : '';
   return [
     h('span', { class: `trophy-delta ${summary.delta >= 0 ? 'up' : 'down'}` }, img('/assets/ui/icon-trophy.png'), `${sign}${summary.delta}`, h('small', {}, ` → ${summary.trophies}`)),
+    summary.gold > 0 && h('span', {}, img('/assets/ui/coin.png', 'reward-coin'), h('b', {}, `+${summary.gold}`)),
     h('span', {}, h('b', {}, `+${summary.xp}`), ' XP'),
+    summary.reduced && h('span', { class: 'dim' }, 'Lower arena — fewer trophies. Fight in your top arena for full rewards!'),
     summary.passXp > 0 && h('span', {}, h('b', {}, `+${summary.passXp}`), ' Pass XP'),
     summary.chest && h('span', { class: `chest-won chest-${summary.chest}` }, `${CHEST_LABEL[summary.chest]} Chest!`),
     summary.chestLost && h('span', { class: 'dim' }, 'Chest slots full — no chest'),

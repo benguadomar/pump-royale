@@ -196,7 +196,7 @@ async function boot() {
   async function startAi() {
     if (starting) return;
     starting = true;
-    const match = net.connected ? await net.request({ t: 'ai-start', deck: state.deck }, 'ai-match', { timeout: 4000 }) : null;
+    const match = net.connected ? await net.request({ t: 'ai-start', deck: state.deck, arenaId: currentArena().id }, 'ai-match', { timeout: 4000 }) : null;
     starting = false;
     startBattle(new LocalSession(state.deck, match, currentArena().id));
   }

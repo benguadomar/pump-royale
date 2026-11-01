@@ -319,7 +319,7 @@ function handle(ws, msg) {
     }
     // ---- AI matches + economy
     case 'ai-start': {
-      const m = economy.aiStart(id, msg.deck);
+      const m = economy.aiStart(id, msg.deck, String(msg.arenaId ?? ''));
       if (m.error) return reply(ws, 'ai-start', { error: m.error });
       return send(ws, {
         t: 'ai-match',

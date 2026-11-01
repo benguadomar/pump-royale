@@ -4,19 +4,21 @@ import { SIM_DT } from './constants.js';
 const ticks = (seconds) => Math.max(1, Math.round(seconds / SIM_DT));
 
 /**
- * Deterministic, fair AI profiles. Higher tiers think more often, make less noisy
- * evaluations and unlock more strategy; they never receive extra elixir or stats.
+ * Deterministic AI profiles, one per arena. Higher tiers think more often, make less noisy
+ * evaluations and unlock more strategy. They never get extra elixir; from Barbarian Bowl on
+ * their cards and towers are `levelBonus` levels above the player's average (fractional: +0.1 level ≈ +1 % stats).
  */
 export const AI_DIFFICULTIES = [
   {
     id: 'rookie',
+    levelBonus: 0.1,
     name: 'Rookie',
     arenaId: 'goblin-stadium',
-    thinkTicks: ticks(0.95),
+    thinkTicks: ticks(0.85),
     initialTicks: ticks(2.4),
     jitterTicks: ticks(0.55),
-    scoreNoise: 3.2,
-    defenseSense: 0.72,
+    scoreNoise: 2.2,
+    defenseSense: 0.78,
     attackElixir: 8.8,
     overflowElixir: 9.8,
     combo: false,
@@ -27,6 +29,7 @@ export const AI_DIFFICULTIES = [
   },
   {
     id: 'fighter',
+    levelBonus: 0.15,
     name: 'Fighter',
     arenaId: 'bone-pit',
     thinkTicks: ticks(0.72),
@@ -44,6 +47,7 @@ export const AI_DIFFICULTIES = [
   },
   {
     id: 'tactician',
+    levelBonus: 0.3,
     name: 'Tactician',
     arenaId: 'barbarian-bowl',
     thinkTicks: ticks(0.5),
@@ -61,6 +65,7 @@ export const AI_DIFFICULTIES = [
   },
   {
     id: 'champion',
+    levelBonus: 0.45,
     name: 'Champion',
     arenaId: 'frozen-peak',
     thinkTicks: ticks(0.3),
@@ -78,6 +83,7 @@ export const AI_DIFFICULTIES = [
   },
   {
     id: 'grandmaster',
+    levelBonus: 0.95,
     name: 'Grandmaster',
     arenaId: 'pump-palace',
     thinkTicks: ticks(0.3),
