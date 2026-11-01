@@ -980,6 +980,9 @@ function instantiateSculpt(s) {
   return { root, groups, meshes: [mesh] };
 }
 
+/** Treasure chest with a hinged lid (`groups.lid`), one design per rarity (see chests.js). */
+export { makeChest as buildChest } from './chests.js';
+
 /** Renders a model as a translucent placement ghost. */
 export function ghostify(model, mat) {
   model.root.traverse((o) => {
