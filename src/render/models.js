@@ -878,16 +878,116 @@ function towerTemplate(kind, team) {
   return towerTemplates.get(key);
 }
 
+// ------------------------------------------------------------------ authored models
+
+/** Sculpted tower models that replace the procedural ones once loaded (footprint in world units). */
+const TOWER_MODELS = { king: { url: '/assets/models/king-tower.glb', width: 3.6 } };
+/** Per kind: { teams: [blue, red] Object3D, top, half } — `half` is the wall half-width (for crack decals). */
+const towerModels = {};
+
+/** Turns the model's blue cloth red for the enemy team (hue shift of saturated blues only). */
+function recolorForRed(texture) {
+  const img = texture.image;
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const p = data.data;
+  for (let i = 0; i < p.length; i += 4) {
+    const r = p[i];
+    const g = p[i + 1];
+    const b = p[i + 2];
+    // Blue team cloth: blue clearly dominant and saturated.
+    if (b > r + 40 && b > g + 20) {
+      p[i] = Math.min(255, b * 0.95 + 20);
+      p[i + 1] = Math.round(g * 0.45);
+      p[i + 2] = Math.round(r * 0.55);
+    }
+  }
+  ctx.putImageData(data, 0, 0);
+  const t = new THREE.CanvasTexture(canvas);
+  t.flipY = texture.flipY;
+  t.colorSpace = texture.colorSpace;
+  t.wrapS = texture.wrapS;
+  t.wrapT = texture.wrapT;
+  t.anisotropy = 8;
+  return t;
+}
+
+/** Half-width of the walls between 25 % and 60 % of the model's height, in the holder's space. */
+function wallHalfWidth(src, height) {
+  src.updateMatrixWorld(true);
+  const v = new THREE.Vector3();
+  let half = 0;
+  src.traverse((o) => {
+    if (!o.isMesh) return;
+    const pos = o.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i += 7) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+      const k = v.y / (height * src.scale.y);
+      if (k > 0.25 && k < 0.6) half = Math.max(half, Math.abs(v.x), Math.abs(v.z));
+    }
+  });
+  return half * 0.92;
+}
+
+/** Loads the sculpted towers (called during boot; procedural towers are the fallback). */
+export async function loadTowerModels() {
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+  const loader = new GLTFLoader();
+  await Promise.all(
+    Object.entries(TOWER_MODELS).map(async ([kind, def]) => {
+      const gltf = await loader.loadAsync(def.url);
+      const src = gltf.scene;
+      const box = new THREE.Box3().setFromObject(src);
+      const size = box.getSize(new THREE.Vector3());
+      const scale = def.width / Math.max(size.x, size.z);
+      const center = box.getCenter(new THREE.Vector3());
+      src.position.set(-center.x * scale, -box.min.y * scale, -center.z * scale);
+      src.scale.setScalar(scale);
+      const holder = new THREE.Group();
+      holder.add(src);
+      src.traverse((o) => {
+        if (!o.isMesh) return;
+        o.castShadow = true;
+        o.receiveShadow = true;
+        o.material.map.anisotropy = 8;
+      });
+      const red = holder.clone(true);
+      red.traverse((o) => {
+        if (!o.isMesh) return;
+        o.material = o.material.clone();
+        o.material.map = recolorForRed(o.material.map);
+      });
+      for (const team of [holder, red]) team.traverse((o) => o.isMesh && (o.userData.baseMat = o.material));
+      towerModels[kind] = { teams: [holder, red], top: size.y * scale, half: wallHalfWidth(src, size.y) };
+    }),
+  );
+}
+
 /** A 3D tower with a live crew (archer, or the king with his cannon) standing on top. */
 export function makeTowerObject(kind, team) {
   const t = towerTemplate(kind, team);
   const tower = instantiate(t);
+  const sculpt = towerModels[kind];
+  if (sculpt) {
+    const body = tower.groups.tower;
+    body.clear();
+    const model = sculpt.teams[team].clone(true);
+    if (team === 0) model.rotation.y = Math.PI;
+    body.add(model);
+  }
   const crew = instantiate(t.crew, { skin: true });
   crew.root.position.y = t.top;
+  // The sculpt has its own king and cannon; the procedural crew stays (invisible) to aim and fire.
+  if (sculpt) crew.root.visible = false;
   crew.root.rotation.y = team === 0 ? Math.PI : 0;
   tower.root.add(crew.root);
   tower.root.userData = {
     body: tower.groups.tower,
+    wall: sculpt ? { half: sculpt.half, top: sculpt.top * 0.7 } : null,
     crew: { ...crew, style: t.style, scale: 1, height: t.crewHeight, launch: crew.groups[t.launch], base: {} },
   };
   return tower.root;

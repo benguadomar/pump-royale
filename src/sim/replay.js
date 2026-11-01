@@ -16,7 +16,7 @@ export class ReplayDriver {
     this.record = record;
     this.sim = new BattleSim(record.decks, { seed: record.seed, levels: record.levels, cardLevels: record.cardLevels });
     if (record.mode === 'ai') {
-      const ai = new BattleAI(this.sim, 1);
+      const ai = new BattleAI(this.sim, 1, { difficulty: record.aiTier ?? record.arenaId ?? 0 });
       this.sim.onStep = (dt) => ai.update(dt);
     }
     this.inputs = [...(record.inputs ?? [])].sort((a, b) => a[0] - b[0]);

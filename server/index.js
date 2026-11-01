@@ -308,7 +308,17 @@ function handle(ws, msg) {
     case 'ai-start': {
       const m = economy.aiStart(id, msg.deck);
       if (m.error) return reply(ws, 'ai-start', { error: m.error });
-      return send(ws, { t: 'ai-match', matchId: m.matchId, seed: m.seed, decks: m.decks, levels: m.levels, cardLevels: m.cardLevels, oppName: m.oppName });
+      return send(ws, {
+        t: 'ai-match',
+        matchId: m.matchId,
+        seed: m.seed,
+        decks: m.decks,
+        levels: m.levels,
+        cardLevels: m.cardLevels,
+        oppName: m.oppName,
+        arenaId: m.arenaId,
+        aiTier: m.aiTier,
+      });
     }
     case 'ai-end':
       // The server re-simulates the match from its seed + the recorded plays before rewarding.

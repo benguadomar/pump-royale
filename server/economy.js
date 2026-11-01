@@ -6,6 +6,8 @@ import {
 } from '../src/data/economy.js';
 import { ReplayDriver } from '../src/sim/replay.js';
 import { randomDeck, rng } from '../src/sim/sim.js';
+import { arenaFor } from '../src/data/arenas.js';
+import { aiDifficulty } from '../src/sim/aiDifficulty.js';
 import { signResult } from './auth.js';
 import { SIM_VERSION } from '../src/sim/constants.js';
 
@@ -65,6 +67,8 @@ export class Economy {
     const r = rng(seed ^ 0x5bd1e995);
     const aiDeck = randomDeck(r);
     const mine = this.levelsFor(p, deck);
+    const arena = arenaFor(p.trophies);
+    const difficulty = aiDifficulty(arena.id);
     // The bot plays at the player's average card level so it stays a fair fight.
     const avg = Math.round(deck.reduce((s, c) => s + mine.cards[c], 0) / deck.length);
     const aiCards = Object.fromEntries(aiDeck.map((c) => [c, avg]));
@@ -76,6 +80,8 @@ export class Economy {
       levels: [mine.tower, mine.tower],
       cardLevels: [mine.cards, aiCards],
       oppName: AI_NAMES[seed % AI_NAMES.length],
+      arenaId: arena.id,
+      aiTier: difficulty.id,
       created: Date.now(),
       player: id,
     };
@@ -97,7 +103,17 @@ export class Economy {
       if (it[2] === 'forfeit') clean.push([tick, 0, 'forfeit']);
       else if (Number.isFinite(it[3]) && Number.isFinite(it[4])) clean.push([tick, 0, Number(it[2]) & 3, Number(it[3]), Number(it[4])]);
     }
-    const record = { v: SIM_VERSION, mode: 'ai', seed: match.seed, decks: match.decks, levels: match.levels, cardLevels: match.cardLevels, inputs: clean };
+    const record = {
+      v: SIM_VERSION,
+      mode: 'ai',
+      seed: match.seed,
+      decks: match.decks,
+      levels: match.levels,
+      cardLevels: match.cardLevels,
+      arenaId: match.arenaId,
+      aiTier: match.aiTier,
+      inputs: clean,
+    };
     const sim = new ReplayDriver(record).runToEnd();
     const r = sim.result(0);
     const p = this.profile(id);

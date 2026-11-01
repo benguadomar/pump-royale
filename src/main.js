@@ -4,8 +4,10 @@ import { BattleView } from './render/battleView.js';
 import { LocalSession, OnlineSession, ReplaySession } from './game/session.js';
 import { HAS_PNG } from './data/cards.js';
 import { generateCardArt } from './render/cardArt.js';
+import { loadTowerModels } from './render/models.js';
 import { EMOTES, emoteImg } from './data/emotes.js';
 import { state, save, recordMatch, currentArena } from './state.js';
+import { ARENA_BY_ID } from './data/arenas.js';
 import { net } from './net.js';
 import { sfx, loadAudio, playMusic } from './audio.js';
 import { h, img, app } from './ui/dom.js';
@@ -27,6 +29,8 @@ const LOADING_LINES = ['Summoning champions...', 'Brewing elixir...', 'Compiling
 
 const UI_IMAGES = [
   '/assets/ui/logo.png',
+  '/assets/ui/coin.png',
+  '/assets/ui/gem.png',
   '/assets/ui/elixir.png',
   '/assets/ui/icon-cards.png',
   '/assets/ui/icon-crown.png',
@@ -101,7 +105,7 @@ function fatal(err) {
 async function boot() {
   const started = performance.now();
   const textureUrls = [...HAS_PNG].map((id) => `/assets/cards/${id}.png`);
-  const total = textureUrls.length + UI_IMAGES.length + 4;
+  const total = textureUrls.length + UI_IMAGES.length + 5;
   let done = 0;
   const progress = () => (barFill.style.width = `${(++done / total) * 100}%`);
 
@@ -115,6 +119,9 @@ async function boot() {
   progress();
   await Promise.all([
     ...textureUrls.map((src) => loadImage(src).then(progress)),
+    loadTowerModels()
+      .catch((e) => console.warn('tower models', e))
+      .then(progress),
     generateCardArt(engine)
       .catch((e) => console.warn('card art', e))
       .then(progress),
@@ -161,7 +168,7 @@ async function boot() {
     starting = true;
     const match = net.connected ? await net.request({ t: 'ai-start', deck: state.deck }, 'ai-match', { timeout: 4000 }) : null;
     starting = false;
-    startBattle(new LocalSession(state.deck, match));
+    startBattle(new LocalSession(state.deck, match, currentArena().id));
   }
 
   async function watchReplay(id, isPublic = false) {
@@ -207,7 +214,7 @@ async function boot() {
     leaveLobby();
     engine.world.showLobbyTowers(false);
     engine.setMode('battle');
-    const arena = currentArena();
+    const arena = ARENA_BY_ID[session.arenaId] ?? currentArena();
     engine.setArena(arena);
     playMusic(arena.music);
 

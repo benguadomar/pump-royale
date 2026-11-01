@@ -453,8 +453,9 @@ export class BattleView {
   crackTower(v, stage) {
     v.stage = stage;
     const body = v.obj.userData.body;
-    const half = v.towerKind === 'king' ? 1.56 : 1.18;
-    const top = v.towerKind === 'king' ? 3.8 : 3.2;
+    const wall = v.obj.userData.wall;
+    const half = wall?.half ?? (v.towerKind === 'king' ? 1.56 : 1.18);
+    const top = wall?.top ?? (v.towerKind === 'king' ? 3.8 : 3.2);
     for (let i = 0; i < 7 * stage; i++) {
       // Zig-zag crack: two or three short segments joined end to end on one wall face.
       const face = Math.floor(Math.random() * 4);

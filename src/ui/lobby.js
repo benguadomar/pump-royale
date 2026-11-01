@@ -8,6 +8,7 @@ import { sfx } from '../audio.js';
 import { net } from '../net.js';
 import { state, save, currentArena } from '../state.js';
 import { ARENAS } from '../data/arenas.js';
+import { aiDifficulty } from '../sim/aiDifficulty.js';
 import { resourceBar, chestSlots, questsBody } from './progress.js';
 import { openClan } from './clan.js';
 
@@ -165,7 +166,12 @@ export function createLobby({ engine, chat, onPlay, onOnline, onReplay }) {
               },
             },
             swatch,
-            h('div', { class: 'arena-info' }, h('b', {}, a.name), h('span', {}, locked ? `🔒 Unlocks at ${a.trophies} trophies` : a.id === active ? 'Selected' : 'Tap to fight here')),
+            h(
+              'div',
+              { class: 'arena-info' },
+              h('b', {}, a.name),
+              h('span', {}, locked ? `🔒 Unlocks at ${a.trophies} trophies` : `${a.id === active ? 'Selected' : 'Tap to fight here'} · AI: ${aiDifficulty(a.id).name}`),
+            ),
           );
         }),
       ),
@@ -195,7 +201,7 @@ export function createLobby({ engine, chat, onPlay, onOnline, onReplay }) {
       { class: 'menu-bar' },
       arenaChip,
       menuBtn('', '/assets/ui/icon-cards.png', 'CARDS', openCards),
-      menuBtn('gold play', '/assets/ui/icon-play.png', 'PLAY', onPlay, 'Battle the AI'),
+      menuBtn('gold play', '/assets/ui/icon-play.png', 'PLAY', onPlay, `Battle ${aiDifficulty(state.trophies).name} AI`),
       menuBtn('', '/assets/ui/icon-deck.png', 'DECK', openDeck),
       menuBtn('online', '/assets/ui/icon-play.png', '1V1 ONLINE', onOnline, 'Battle a real player'),
     ),

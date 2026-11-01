@@ -24,7 +24,7 @@ export const START_ELIXIR = 5;
 export const DEPLOY_TIME = 1.0;
 export const SIM_DT = 1 / 30;
 /** Bumped whenever the rules change the outcome of a recorded match (old replays are hidden). */
-export const SIM_VERSION = 3;
+export const SIM_VERSION = 4;
 
 /** Mirrors a canonical point across the arena center (what team 1 sees). */
 export const mirrorX = (x) => ARENA_W - x;

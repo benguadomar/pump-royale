@@ -19,15 +19,17 @@ const PREDICTION_TIMEOUT_MS = 2500;
  * award trophies; without one (offline) it is a casual unranked game.
  */
 export class LocalSession {
-  constructor(deck, match = null) {
+  constructor(deck, match = null, arenaId = 'goblin-stadium') {
     this.mode = 'ai';
     this.match = match;
+    this.arenaId = match?.arenaId ?? arenaId;
+    this.aiTier = match?.aiTier ?? this.arenaId;
     this.oppName = match?.oppName ?? AI_NAMES[Math.floor(Math.random() * AI_NAMES.length)];
     this.sim = match
       ? new BattleSim(match.decks, { seed: match.seed, levels: match.levels, cardLevels: match.cardLevels })
       : new BattleSim([deck, randomDeck()]);
     this.inputs = [];
-    const ai = new BattleAI(this.sim, 1);
+    const ai = new BattleAI(this.sim, 1, { difficulty: this.aiTier });
     this.sim.onStep = (dt) => ai.update(dt);
     this.onEmote = null;
     this.aiEmoteAt = 0;
@@ -248,6 +250,7 @@ export class ReplaySession {
     this.mode = 'replay';
     this.team = replay.team ?? 0;
     this.oppName = replay.opp;
+    this.arenaId = replay.record.arenaId ?? null;
     this.driver = new ReplayDriver(replay.record);
     this.sim = this.driver.sim;
     this.speed = 1;
