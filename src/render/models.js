@@ -882,7 +882,7 @@ function towerTemplate(kind, team) {
 /** Sculpted tower models that replace the procedural ones once loaded (footprint in world units). */
 const TOWER_MODELS = {
   king: { url: '/assets/models/king-tower.glb', width: 3.6 },
-  princess: { url: '/assets/models/princess-tower.glb', width: 3.3 },
+  princess: { url: '/assets/models/princess-tower.glb', width: 2.85 },
 };
 /** Per kind: { teams: [blue, red] Object3D, top, half } — `half` is the wall half-width (for crack decals). */
 const towerModels = {};
@@ -960,7 +960,7 @@ function pivotMesh(mesh, pivotOf) {
 const boxOf = (pts) => new THREE.Box3().setFromPoints(pts);
 
 /** Skin weights for the sculpted king: root (feet) → spine (waist) → head (neck up), blended smoothly. */
-function skinKing(geometry, toPivot, height) {
+function skinCrew(geometry, toPivot, height, rig) {
   // Skinning quantized (int16-normalized) vertex data corrupts other meshes under WebGPU: use floats.
   for (const name of ['position', 'normal', 'uv']) {
     const a = geometry.attributes[name];
@@ -979,18 +979,23 @@ function skinKing(geometry, toPivot, height) {
     return k * k * (3 - 2 * k);
   };
   for (let i = 0; i < n; i++) {
-    const y = v.fromBufferAttribute(pos, i).applyMatrix4(toPivot).y / height;
-    const head = smoothstep(KING_NECK - 0.06, KING_NECK + 0.06, y);
-    const spine = smoothstep(KING_WAIST - 0.08, KING_WAIST + 0.08, y) * (1 - head);
-    si.set([0, 1, 2, 0], i * 4);
-    sw.set([1 - head - spine, spine, head, 0], i * 4);
+    v.fromBufferAttribute(pos, i).applyMatrix4(toPivot);
+    const y = v.y / height;
+    // The bow arm: everything held out in front of the body (hands, bow, arrow).
+    const arm = rig.armZ ? smoothstep(rig.armZ[0], rig.armZ[1], v.z) * smoothstep(rig.waist, rig.waist + 0.1, y) : 0;
+    const head = smoothstep(rig.neck - 0.06, rig.neck + 0.06, y) * (1 - arm);
+    const spine = smoothstep(rig.waist - 0.08, rig.waist + 0.08, y) * (1 - head - arm);
+    si.set([0, 1, 2, 3], i * 4);
+    sw.set([1 - head - spine - arm, spine, head, arm], i * 4);
   }
   geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
   geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
 }
-/** Bone heights as a fraction of the king's height (measured on the sculpt). */
-const KING_WAIST = 0.22;
-const KING_NECK = 0.5;
+/** Bone heights as a fraction of the character's height, and the bow arm's depth band (measured on the sculpts). */
+const CREW_RIGS = {
+  king: { waist: 0.22, neck: 0.5 },
+  archer: { waist: 0.25, neck: 0.55, armZ: [0.09, 0.15], shoulder: 0.5 },
+};
 
 /** Loads the sculpted towers (called during boot; procedural towers are the fallback). */
 export async function loadTowerModels() {
@@ -1001,25 +1006,36 @@ export async function loadTowerModels() {
       const gltf = await loader.loadAsync(def.url);
       const src = gltf.scene;
       const crew = {};
-      const king = src.getObjectByName('king')?.isMesh ? src.getObjectByName('king') : src.getObjectByName('king')?.children.find((o) => o.isMesh);
-      const cannon = src.getObjectByName('cannon')?.isMesh ? src.getObjectByName('cannon') : src.getObjectByName('cannon')?.children.find((o) => o.isMesh);
-      if (king && cannon) {
+      const meshNamed = (name) => {
+        const o = src.getObjectByName(name);
+        return o?.isMesh ? o : o?.children.find((c) => c.isMesh);
+      };
+      const crewName = meshNamed('king') ? 'king' : meshNamed('archer') ? 'archer' : null;
+      const king = crewName && meshNamed(crewName);
+      const cannon = meshNamed('cannon');
+      if (king) {
         const k = pivotMesh(king, (pts) => {
           const b = boxOf(pts);
           return new THREE.Vector3((b.min.x + b.max.x) / 2, b.min.y, (b.min.z + b.max.z) / 2);
         });
-        const c = pivotMesh(cannon, (pts) => {
-          const minY = boxOf(pts).min.y;
-          const b = boxOf(pts.filter((p) => p.y < minY + 0.2));
-          return b.getCenter(new THREE.Vector3());
-        });
-        const kingBox = boxOf(k.pts);
-        const height = kingBox.max.y;
-        // Barrel tip: the gun's most forward point; the recoil runs back along axle → tip.
-        const tip = c.pts.reduce((a, p) => (p.z > a.z ? p : a), c.pts[0]).clone();
-        Object.assign(crew, { height, tip, recoilDir: tip.clone().normalize() });
-        // After attach(), king.matrix maps the (quantized) geometry into the pivot's space.
-        skinKing(king.geometry, king.matrix, height);
+        const height = boxOf(k.pts).max.y;
+        const rig = CREW_RIGS[crewName];
+        Object.assign(crew, { name: crewName, height, rig });
+        if (cannon) {
+          const c = pivotMesh(cannon, (pts) => {
+            const minY = boxOf(pts).min.y;
+            const b = boxOf(pts.filter((p) => p.y < minY + 0.2));
+            return b.getCenter(new THREE.Vector3());
+          });
+          // Barrel tip: the gun's most forward point; the recoil runs back along axle → tip.
+          const tip = c.pts.reduce((a, p) => (p.z > a.z ? p : a), c.pts[0]).clone();
+          Object.assign(crew, { tip, recoilDir: tip.clone().normalize() });
+        } else {
+          // Arrow tip: the archer's most forward point (fires from the bow arm).
+          crew.tip = k.pts.reduce((a, p) => (p.z > a.z ? p : a), k.pts[0]).clone();
+        }
+        // After attach(), the mesh matrix maps the (quantized) geometry into the pivot's space.
+        skinCrew(king.geometry, king.matrix, height, rig);
       }
       const box = new THREE.Box3().setFromObject(src);
       const size = box.getSize(new THREE.Vector3());
@@ -1048,7 +1064,8 @@ export async function loadTowerModels() {
 
 /** Swaps the sculpt's static king for a SkinnedMesh on three bones (feet, waist, neck) in its pivot. */
 function rigSculptKing(model, info) {
-  const king = model.getObjectByName('king');
+  const found = model.getObjectByName(info.name);
+  const king = found.isMesh ? found : found.children.find((o) => o.isMesh);
   const pivot = king.parent;
   const skinned = new THREE.SkinnedMesh(king.geometry, king.material);
   skinned.position.copy(king.position);
@@ -1060,16 +1077,19 @@ function rigSculptKing(model, info) {
   const root = new THREE.Bone();
   const spine = new THREE.Bone();
   const head = new THREE.Bone();
-  spine.position.y = KING_WAIST * info.height;
-  head.position.y = (KING_NECK - KING_WAIST) * info.height;
+  const arm = new THREE.Bone();
+  const { waist, neck, shoulder = neck } = info.rig;
+  spine.position.y = waist * info.height;
+  head.position.y = (neck - waist) * info.height;
+  arm.position.y = (shoulder - waist) * info.height;
   root.add(spine);
-  spine.add(head);
+  spine.add(head, arm);
   pivot.add(root);
   pivot.remove(king);
   pivot.add(skinned);
   model.updateMatrixWorld(true);
-  skinned.bind(new THREE.Skeleton([root, spine, head]));
-  return { pivot, bones: { root, spine, head } };
+  skinned.bind(new THREE.Skeleton([root, spine, head, arm]));
+  return { pivot, bones: { root, spine, head, arm } };
 }
 
 const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -1087,7 +1107,7 @@ export class SculptKingAnimator {
     this.cannon = cannon;
     this.info = info;
     this.hitSpeed = hitSpeed;
-    this.rest = { cannon: cannon.position.clone(), cannonRot: cannon.rotation.clone() };
+    this.rest = cannon ? { cannon: cannon.position.clone(), cannonRot: cannon.rotation.clone() } : null;
     this.since = 99;
     this.yaw = 0;
     this.wake = 0;
@@ -1117,10 +1137,19 @@ export class SculptKingAnimator {
     // Recoil: back along the barrel, nose up, then spring home.
     const k = this.since < 0.06 ? this.since / 0.06 : Math.max(0, 1 - (this.since - 0.06) / 0.35) ** 2;
     const c = this.cannon;
-    c.position.copy(this.rest.cannon).addScaledVector(this.info.recoilDir, -0.06 * k);
-    c.rotation.set(this.rest.cannonRot.x - 0.16 * k, this.rest.cannonRot.y + this.yaw, this.rest.cannonRot.z);
+    if (c) {
+      c.position.copy(this.rest.cannon).addScaledVector(this.info.recoilDir, -0.06 * k);
+      c.rotation.set(this.rest.cannonRot.x - 0.16 * k, this.rest.cannonRot.y + this.yaw, this.rest.cannonRot.z);
+    }
 
-    const { root, spine, head } = this.king.bones;
+    const { root, spine, head, arm } = this.king.bones;
+    if (!c) {
+      // Bow: draw back while the next shot comes up, kick up on release.
+      const H = this.hitSpeed;
+      const draw = this.engaged && this.since > H * 0.45 ? Math.min(1, (this.since - H * 0.45) / (H * 0.5)) : 0;
+      arm.rotation.set(-0.22 * k + draw * 0.12, draw * -0.1, 0);
+      arm.position.z = -draw * 0.02 * this.info.height;
+    }
     const breathe = Math.sin(t * (asleep ? 1.3 : 2.4) + this.seed);
     const hop = Math.sin(this.wake * Math.PI) * 0.08;
     root.position.y = hop * this.info.height;
@@ -1148,10 +1177,15 @@ export function makeTowerObject(kind, team) {
     body.add(model);
     if (sculpt.crew) {
       const king = rigSculptKing(model, sculpt.crew);
-      const cannon = model.getObjectByName('cannon').parent;
+      const cannon = model.getObjectByName('cannon')?.parent ?? null;
       const muzzle = new THREE.Object3D();
       muzzle.position.copy(sculpt.crew.tip);
-      cannon.add(muzzle);
+      if (cannon) cannon.add(muzzle);
+      else {
+        // Arrows leave from the arrow tip, carried by the bow arm.
+        muzzle.position.y -= sculpt.crew.rig.shoulder * sculpt.crew.height;
+        king.bones.arm.add(muzzle);
+      }
       // The battle view steers `aim` toward targets; the animator turns king and cannon from it.
       const aim = new THREE.Group();
       aim.rotation.y = model.rotation.y;

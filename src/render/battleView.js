@@ -159,7 +159,8 @@ export class BattleView {
       const obj = makeTowerObject(e.towerKind, e.team);
       obj.position.copy(tileToWorld(e.x, e.y));
       const plate = this.makeTowerPlate(e.team, e.maxHp);
-      plate.sprite.position.y = e.towerKind === 'king' ? 6.3 : 5.5;
+      const sculptTop = obj.userData.crew?.style === 'sculpt' ? obj.userData.crew.height : null;
+      plate.sprite.position.y = sculptTop ? sculptTop + 1.1 : e.towerKind === 'king' ? 6.3 : 5.5;
       obj.add(plate.sprite);
       this.group.add(obj);
       const crew = obj.userData.crew;
