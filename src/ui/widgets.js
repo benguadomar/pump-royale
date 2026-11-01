@@ -53,25 +53,11 @@ async function copy(text) {
   toastMsg('Copied!');
 }
 
-/** Picture-in-picture gameplay clip with a copyable contract address under it. */
+/** Follow button and copyable contract address (bottom-right corner). */
 export function mediaBox() {
-  const video = h('video', { src: '/assets/video/gameplay.mp4', poster: '/assets/video/poster.jpg', muted: true, loop: true, playsInline: true, preload: 'metadata' });
-  video.muted = true;
-  const playBtn = h('button', { class: 'pip-play', title: 'Play / pause' }, '▶');
-  const toggle = () => {
-    sfx.click();
-    if (video.paused) video.play().catch(() => {});
-    else video.pause();
-  };
-  video.onplay = () => playBtn.classList.add('playing');
-  video.onpause = () => playBtn.classList.remove('playing');
-  playBtn.onclick = toggle;
-  video.onclick = toggle;
-  const expand = h('button', { class: 'pip-expand', title: 'Picture in picture', onclick: () => video.requestPictureInPicture?.().catch(() => {}) }, '⤢');
   return h(
     'div',
     { class: 'media-box' },
-    h('div', { class: 'pip wood panel' }, video, playBtn, expand),
     h(
       'div',
       { class: 'ca-row' },
