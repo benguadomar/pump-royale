@@ -16,6 +16,8 @@ const HIT_STOP = 0.065;
 /** Units whose blows freeze attacker and victim for a beat. */
 const HEAVY = new Set(['pekka', 'giant', 'hog-rider']);
 const DEATH_STYLE = { goblin: 'spin', giant: 'thud', pekka: 'thud', 'hog-rider': 'thud' };
+/** Footfall dust size for heavy walkers, and the tiles walked between steps. */
+const FOOTFALL = { giant: [1.5, 0.55], pekka: [1.5, 0.5], 'hog-rider': [1.1, 0.45], barbarian: [0.7, 0.4] };
 
 const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const _v = new THREE.Vector3();
@@ -200,6 +202,7 @@ export class BattleView {
     this.group.add(obj);
     return {
       kind: e.kind,
+      team: e.team,
       obj,
       model,
       anim: new Animator(model, { hitSpeed: card.hitSpeed, stride: 1.25 / model.scale }),
@@ -380,11 +383,36 @@ export class BattleView {
     const dx = pos.x - v.obj.position.x;
     const dz = pos.z - v.obj.position.z;
     v.obj.position.copy(pos);
+    // Measured ground speed (tiles/s): animation cadence follows real motion, so heavy
+    // troops visibly build up speed and knocked troops slide.
+    const moved = v.px == null ? 0 : Math.hypot(e.x - v.px, e.y - v.py);
+    if (dt > 0) v.spd = THREE.MathUtils.damp(v.spd ?? 0, moved / dt, 12, dt);
+    v.px = e.x;
+    v.py = e.y;
+    const staggered = !!(e.staggered || e.stagger > 0);
+    if (staggered && v.spd > 0.4) {
+      v.skidT = (v.skidT ?? 0) - dt;
+      if (v.skidT <= 0) {
+        v.skidT = 0.045;
+        this.fx.skid(pos, dx / Math.max(dt, 1e-3), dz / Math.max(dt, 1e-3), 0.6 + v.card.radius);
+      }
+    }
+    const foot = FOOTFALL[v.card.id];
+    if (foot && e.moving && !staggered) {
+      v.stride = (v.stride ?? 0) + moved;
+      if (v.stride > foot[1]) {
+        v.stride = 0;
+        v.foot = -(v.foot ?? 1);
+        const side = v.foot * 0.3 * foot[0];
+        const yaw = v.model.root.rotation.y;
+        this.fx.footstep({ x: pos.x + side * Math.cos(yaw), y: 0, z: pos.z - side * Math.sin(yaw) }, foot[0]);
+      }
+    }
     if (!v.anim.engaged) v.aim = null;
     this.steer(v, v.model.root, pos, dx, dz, dt);
     v.sinkK = THREE.MathUtils.damp(v.sinkK ?? (e.hidden ? 1 : 0), e.hidden ? 1 : 0, 5, dt);
     const held = !!(e.frozen || e.stunned);
-    v.anim.update(dt, t, { moving: e.moving && !held, speed: SPEEDS[v.card.speed] ?? 0, deploy: e.deploy, frozen: held, sink: v.sinkK });
+    v.anim.update(dt, t, { moving: e.moving && !held && v.spd > 0.08, speed: Math.min(v.spd, (SPEEDS[v.card.speed] ?? 1) * 2.2), deploy: e.deploy, frozen: held, sink: v.sinkK, stagger: staggered });
     this.setFlash(v, v.flash > 0);
     this.statusFx(v, e, pos, dt);
 
@@ -637,7 +665,9 @@ export class BattleView {
         const v = this.visuals.get(ev.to);
         if (v) {
           const p = v.obj.position;
-          this.fx.hitPuff({ x: p.x, y: v.kind === 'tower' ? 2.2 : (v.model?.height ?? 1.4) * 0.55, z: p.z }, [1, 0.95, 0.8]);
+          const from = src?.obj.position ?? p;
+          const power = Math.min(1, (src?.card?.damage ?? 120) / 700) * (ev.charged ? 1.4 : 1);
+          this.fx.impact({ x: p.x, y: v.kind === 'tower' ? 2.2 : (v.model?.height ?? 1.4) * 0.55, z: p.z }, p.x - from.x, p.z - from.z, power, [1, 0.93, 0.78]);
           this.impactCamera(v);
         }
         if (src && HEAVY.has(src.card?.id)) {
@@ -656,7 +686,8 @@ export class BattleView {
           this.engine.shake(0.12);
         } else if (ev.kind === 'cannonball') {
           this.fx.smoke({ x: p.x, y: 0.6, z: p.z }, 3, 0.3, 0.7);
-          this.fx.hitPuff({ x: p.x, y: 0.8, z: p.z }, [1, 0.85, 0.6]);
+          this.fx.impact({ x: p.x, y: 0.8, z: p.z }, 0, 0, 0.6, [1, 0.85, 0.6]);
+          this.fx.debris({ x: p.x, y: 0.3, z: p.z }, 5, 3);
         } else if (ev.kind === 'arrow') {
           this.fx.hitPuff({ x: p.x, y: 0.9, z: p.z }, [1, 0.95, 0.75]);
         }
@@ -665,7 +696,8 @@ export class BattleView {
       case 'death': {
         if (ev.kind === 'tower') break;
         const p = tileToWorld(ev.x, ev.y);
-        this.fx.smoke({ x: p.x, y: 0.4, z: p.z }, 5, 0.35, 0.8);
+        const dv = this.visuals.get(ev.id);
+        this.fx.poof(p, 0.7 + (dv?.card?.radius ?? 0.5), dv?.team === 1 ? [1, 0.6, 0.55] : [0.6, 0.8, 1]);
         break;
       }
       case 'tower':

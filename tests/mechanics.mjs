@@ -54,6 +54,48 @@ check('roster is the original 10 cards', CARDS.length === 10 && CARDS.every((c) 
   const i = sim.sides[0].hand.findIndex((id) => CARD_BY_ID[id].cost > 1);
   check('not enough elixir is refused', sim.playCard(0, i, 3.5, 10) === 'elixir');
 }
+// Newton: heavier troops accelerate slower (F = m·a with a bounded drive force).
+{
+  const sim = fresh();
+  const sk = unit(sim, 'skeleton', 0, 3.5, 4);
+  const gi = unit(sim, 'giant', 0, 14.5, 4);
+  run(sim, 0.1);
+  check('light troop reaches speed faster than a heavy one', Math.hypot(sk.vx, sk.vy) / sk.speed > Math.hypot(gi.vx, gi.vy) / gi.speed, `${(Math.hypot(sk.vx, sk.vy) / sk.speed).toFixed(2)} vs ${(Math.hypot(gi.vx, gi.vy) / gi.speed).toFixed(2)}`);
+}
+// Impulse: the same blow changes a light troop's velocity far more (Δv = J / m).
+{
+  const sim = fresh();
+  const sk = unit(sim, 'skeleton', 1, 6, 20);
+  const gi = unit(sim, 'giant', 1, 12, 20);
+  sim.applyHit({ team: 0, damage: 40, x: 6, y: 18 }, sk, sk.x, sk.y);
+  sim.applyHit({ team: 0, damage: 40, x: 12, y: 18 }, gi, gi.x, gi.y);
+  const r = sk.vy / gi.vy;
+  check('knockback is inversely proportional to mass', Math.abs(r - gi.mass / sk.mass) < 0.01 * (gi.mass / sk.mass), `ratio ${r.toFixed(1)} vs mass ratio ${(gi.mass / sk.mass).toFixed(1)}`);
+  check('knockback pushes away from the attacker', sk.vy > 0);
+  check('a knocked troop is staggered', sk.stagger > 0);
+  const y0 = sk.y;
+  run(sim, 0.1);
+  check('a staggered troop slides back under friction', sk.y > y0 + 0.02, `slid ${(sk.y - y0).toFixed(3)} tiles`);
+  sk.target = null;
+  sk.speed = 0;
+  run(sim, 1);
+  check('friction brings a pushed troop to rest', Math.hypot(sk.vx, sk.vy) < 0.01);
+}
+// Momentum: a Giant walking into a Skeleton barely slows; the Skeleton is shoved aside.
+{
+  const sim = fresh();
+  const gi = unit(sim, 'giant', 0, 9, 10);
+  const sk = unit(sim, 'skeleton', 0, 9, 10.4);
+  gi.speed = sk.speed = 0;
+  gi.vy = 1;
+  const p0 = gi.mass * gi.vy + sk.mass * sk.vy;
+  sim.separate();
+  const p1 = gi.mass * gi.vy + sk.mass * sk.vy;
+  check('collision conserves momentum', Math.abs(p1 - p0) < 1e-6, `${p0.toFixed(3)} → ${p1.toFixed(3)}`);
+  const skMoved = sk.y - 10.4;
+  const giMoved = 10 - gi.y;
+  check('heavy body pushes the light one', skMoved > giMoved * 20 && sk.vy > gi.vy, `skeleton moved ${skMoved.toFixed(3)}, giant ${giMoved.toFixed(4)}`);
+}
 // Levels: +10 % per level.
 {
   const sim = new BattleSim([deck, deck], { seed: 3, levels: [12, 10] });

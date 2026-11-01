@@ -16,6 +16,7 @@ const F_STUNNED = 256;
 const F_RAGED = 512;
 const F_HIDDEN = 1024;
 const F_CHARGING = 2048;
+const F_STAGGER = 4096;
 
 const POINT_KEYS = [['x', 'y'], ['fx', 'fy'], ['tx', 'ty']];
 
@@ -53,6 +54,7 @@ export function encodeSnapshot(sim, team, events = []) {
     if (e.raged > 0) flags |= F_RAGED;
     if (e.hidden) flags |= F_HIDDEN;
     if (e.charging) flags |= F_CHARGING;
+    if (e.stagger > 0) flags |= F_STAGGER;
     ents.push([
       e.id,
       KIND_CODE[e.kind],
@@ -111,6 +113,7 @@ export function decodeSnapshot(s) {
       raged: Boolean(f & F_RAGED),
       hidden: Boolean(f & F_HIDDEN),
       charging: Boolean(f & F_CHARGING),
+      staggered: Boolean(f & F_STAGGER),
     })),
   };
 }

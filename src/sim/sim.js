@@ -4,6 +4,7 @@ import {
   MATCH_TIME, OVERTIME, DOUBLE_ELIXIR_AT, ELIXIR_PER_SEC, MAX_ELIXIR, START_ELIXIR, DEPLOY_TIME, SIM_DT,
   zoneAllows,
 } from './constants.js';
+import { massOf, invMass, drive, seek, integrate, impulse, collide, blockVelocity, KNOCK_PER_DAMAGE } from './physics.js';
 
 const SIGHT = 5.5;
 const RETARGET_EVERY = 0.25;
@@ -18,6 +19,9 @@ const TESLA_HIDE_AFTER = 1.2;
 const RAMP_AT = [2, 4];
 /** Troops lighter than this get pushed back by Fireball. */
 const KNOCKBACK_MAX_HP = 2000;
+
+/** Momentum carried per point of damage, relative to a melee blow (arrows are light, bombs heavy). */
+const KNOCK_SCALE = { arrow: 0.3, bolt: 0.4, bullet: 0.5, fireball: 1, bomb: 1.3, cannonball: 1.1 };
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -311,6 +315,12 @@ export class BattleSim {
       frozen: 0,
       stunned: 0,
       raged: 0,
+      mass: massOf(card),
+      vx: 0,
+      vy: 0,
+      wvx: 0,
+      wvy: 0,
+      stagger: 0,
     });
   }
 
@@ -338,6 +348,7 @@ export class BattleSim {
     this.flipOrder = !this.flipOrder;
     const list = this.flipOrder ? [...this.entities].reverse() : this.entities;
     for (const e of list) if (!e.dead) this.stepEntity(e, dt);
+    this.physics(dt);
     this.separate();
     this.updateProjectiles(dt);
     this.updateSpells(dt);
@@ -459,6 +470,8 @@ export class BattleSim {
 
   stepEntity(e, dt) {
     e.lunge = Math.max(0, e.lunge - dt);
+    e.wvx = 0;
+    e.wvy = 0;
     if (e.deploy > 0) {
       e.deploy -= dt;
       return;
@@ -504,7 +517,7 @@ export class BattleSim {
         this.attack(e, target);
       }
     } else if (e.kind === 'troop') {
-      this.moveToward(e, target, dt * haste);
+      this.moveToward(e, target, dt, haste);
     }
   }
 
@@ -527,15 +540,16 @@ export class BattleSim {
     }
   }
 
-  moveToward(e, target, dt) {
+  /** Sets the troop's desired velocity (the physics pass turns it into motion). */
+  moveToward(e, target, dt, haste = 1) {
     if (e.charge) {
-      e.chargeRun += e.speed * dt;
+      e.chargeRun += e.speed * haste * dt;
       if (!e.charging && e.chargeRun >= e.charge) {
         e.charging = true;
         this.emit({ e: 'charge', id: e.id });
       }
     }
-    const speed = e.speed * (e.charging ? CHARGE_MULT : 1);
+    const speed = e.speed * haste * (e.charging ? CHARGE_MULT : 1);
     if (e.air) {
       // Flyers ignore the river and bridges.
       const dx = target.x - e.x;
@@ -564,14 +578,23 @@ export class BattleSim {
         gy = RIVER_Y + (targetSide === 0 ? -(RIVER_HALF + 0.7) : RIVER_HALF + 0.7);
       }
     }
-    const dx = gx - e.x;
-    const dy = gy - e.y;
-    const len = Math.hypot(dx, dy) || 1;
-    const stepLen = Math.min(len, speed * dt);
-    e.x += (dx / len) * stepLen;
-    e.y += (dy / len) * stepLen;
+    [e.wvx, e.wvy] = seek(e, gx, gy, speed);
     e.moving = true;
-    if (Math.abs(dx) > 0.05) e.facingLeft = dx < 0;
+    if (Math.abs(gx - e.x) > 0.05) e.facingLeft = gx < e.x;
+  }
+
+  /** F = m·a for every ground troop, then integrate positions. Frozen troops are held still. */
+  physics(dt) {
+    for (const e of this.entities) {
+      if (e.dead || e.kind !== 'troop' || e.air) continue;
+      if (e.deploy > 0 || e.frozen > 0) {
+        e.vx = 0;
+        e.vy = 0;
+        continue;
+      }
+      drive(e, e.wvx, e.wvy, dt);
+      integrate(e, dt);
+    }
   }
 
   attack(e, target) {
@@ -630,15 +653,25 @@ export class BattleSim {
   applyHit(src, target, x, y) {
     const team = src.team;
     const kind = src.projectile ?? src.kind;
+    const from = src.source ?? src;
+    const J = src.damage * KNOCK_PER_DAMAGE * (KNOCK_SCALE[kind] ?? 1);
     if (src.splash > 0) {
       for (const o of this.entities) {
         if (o.dead || o.team === team || o.hidden) continue;
         if (o.kind === 'troop' && o.deploy > 0) continue;
         if (o.air && !src.hitsAir) continue;
-        if (Math.hypot(o.x - x, o.y - y) <= src.splash + o.radius) this.damage(o, src.damage, src);
+        if (Math.hypot(o.x - x, o.y - y) > src.splash + o.radius) continue;
+        this.damage(o, src.damage, src);
+        // Blast impulse points away from the impact; a direct hit gets pushed along the shot.
+        const rx = o.x - x;
+        const ry = o.y - y;
+        const r = Math.hypot(rx, ry);
+        if (r > 0.05) impulse(o, rx, ry, J);
+        else if (from.x != null) impulse(o, o.x - from.x, o.y - from.y, J);
       }
     } else if (target && !target.dead) {
       this.damage(target, src.damage, src);
+      if (from.x != null) impulse(target, target.x - from.x, target.y - from.y, J);
     }
     this.emit({ e: 'hit', x, y, splash: src.splash ?? 0, kind, team });
   }
@@ -681,6 +714,7 @@ export class BattleSim {
     if (this.overtime) this.finish(1 - e.team);
   }
 
+  /** Contacts: troop↔troop momentum exchange, then walls, towers, arena edges and the river. */
   separate() {
     const movers = this.entities.filter((e) => !e.dead && e.kind === 'troop');
     const solids = this.entities.filter((e) => !e.dead && (e.kind === 'tower' || e.kind === 'building'));
@@ -689,17 +723,7 @@ export class BattleSim {
       for (let j = i + 1; j < movers.length; j++) {
         const b = movers[j];
         if (a.air !== b.air) continue;
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const d = Math.hypot(dx, dy) || 0.001;
-        const min = (a.radius + b.radius) * 0.85;
-        if (d >= min) continue;
-        const push = min - d;
-        const wa = b.radius / (a.radius + b.radius);
-        a.x -= (dx / d) * push * wa;
-        a.y -= (dy / d) * push * wa;
-        b.x += (dx / d) * push * (1 - wa);
-        b.y += (dy / d) * push * (1 - wa);
+        collide(a, b, (a.radius + b.radius) * 0.85);
       }
       if (a.air) {
         a.x = clamp(a.x, 0.4, ARENA_W - 0.4);
@@ -714,15 +738,32 @@ export class BattleSim {
         if (d < min) {
           a.x = s.x + (dx / d) * min;
           a.y = s.y + (dy / d) * min;
+          blockVelocity(a, dx / d, dy / d);
         }
       }
+      this.confine(a);
+    }
+  }
+
+  /** Keeps a ground troop on the field: arena edges, and only crossing the river on a bridge. */
+  confine(a) {
+    if (a.x < 0.4 || a.x > ARENA_W - 0.4) {
       a.x = clamp(a.x, 0.4, ARENA_W - 0.4);
+      a.vx = 0;
+    }
+    if (a.y < 0.4 || a.y > ARENA_H - 0.4) {
       a.y = clamp(a.y, 0.4, ARENA_H - 0.4);
-      if (Math.abs(a.y - RIVER_Y) < RIVER_HALF) {
-        const bx = BRIDGES_X.reduce((best, x) => (Math.abs(a.x - x) < Math.abs(a.x - best) ? x : best));
-        const off = a.x - bx;
-        if (Math.abs(off) > BRIDGE_HALF + 0.5) a.y = a.y < RIVER_Y ? RIVER_Y - RIVER_HALF : RIVER_Y + RIVER_HALF;
-        else if (Math.abs(off) > BRIDGE_HALF) a.x = bx + Math.sign(off) * BRIDGE_HALF;
+      a.vy = 0;
+    }
+    if (Math.abs(a.y - RIVER_Y) < RIVER_HALF) {
+      const bx = BRIDGES_X.reduce((best, x) => (Math.abs(a.x - x) < Math.abs(a.x - best) ? x : best));
+      const off = a.x - bx;
+      if (Math.abs(off) > BRIDGE_HALF + 0.5) {
+        a.y = a.y < RIVER_Y ? RIVER_Y - RIVER_HALF : RIVER_Y + RIVER_HALF;
+        a.vy = 0;
+      } else if (Math.abs(off) > BRIDGE_HALF) {
+        a.x = bx + Math.sign(off) * BRIDGE_HALF;
+        a.vx = 0;
       }
     }
   }

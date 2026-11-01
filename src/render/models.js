@@ -100,6 +100,17 @@ const G = {
   cylLo: new THREE.CylinderGeometry(1, 1, 1, 8),
   cone: new THREE.ConeGeometry(1, 1, 10),
   coneLo: new THREE.ConeGeometry(1, 1, 5),
+  diamond: new THREE.OctahedronGeometry(1, 0),
+  banner: (() => {
+    const s = new THREE.Shape();
+    s.moveTo(-0.5, 0.5);
+    s.lineTo(0.5, 0.5);
+    s.lineTo(0.5, -0.3);
+    s.lineTo(0, -0.5);
+    s.lineTo(-0.5, -0.3);
+    s.closePath();
+    return new THREE.ExtrudeGeometry(s, { depth: 1, bevelEnabled: false }).translate(0, 0, -0.5);
+  })(),
   // Head coverings: sphere shells with a round hole cut around the face (+Z).
   hood: shell({ faceAngle: 52, minY: -0.62 }),
   hair: shell({ faceAngle: 62, minY: -0.25 }),
@@ -225,17 +236,89 @@ function compile(def, mat = unitMat) {
   return parts;
 }
 
-function instantiate(template) {
+// ------------------------------------------------------------------ skinning
+
+/** Parts that stay separate rigid meshes on their bone (shown/hidden on their own). */
+const RIGID_PARTS = new Set(['prop']);
+/** Joints whose skin blends into the parent bone near the pivot (shoulder, elbow, hip, knee, neck). */
+const SOFT_JOINTS = new Set(['head', 'armL', 'armR', 'foreL', 'foreR', 'legL', 'legR', 'shinL', 'shinR', 'pl0', 'pl1', 'pl2', 'pl3']);
+/** Skin within this distance of a soft joint's pivot is shared with the parent bone (model units). */
+const BLEND_RADIUS = 0.1;
+
+/**
+ * Builds (once per template) a single skinned geometry from every unit-material part:
+ * vertices are moved into model space and weighted to their part's bone, with a smooth
+ * falloff to the parent bone around soft joints so limbs bend instead of hinging.
+ */
+function skinGeometry(template) {
+  if (template.skinGeo !== undefined) return template.skinGeo;
+  const abs = { root: [0, 0, 0] };
+  const index = { root: 0 };
+  template.parts.forEach((p, i) => {
+    const pp = abs[p.parent];
+    abs[p.name] = [pp[0] + p.offset[0], pp[1] + p.offset[1], pp[2] + p.offset[2]];
+    index[p.name] = i + 1;
+  });
+  const geos = [];
+  for (const p of template.parts) {
+    if (!p.geo || p.mat !== unitMat || RIGID_PARTS.has(p.name)) continue;
+    const g = p.geo.clone();
+    const [px, py, pz] = abs[p.name];
+    g.translate(px, py, pz);
+    const pos = g.attributes.position;
+    const n = pos.count;
+    const si = new Uint16Array(n * 4);
+    const sw = new Float32Array(n * 4);
+    const soft = SOFT_JOINTS.has(p.name);
+    for (let i = 0; i < n; i++) {
+      si[i * 4] = index[p.name];
+      let w = 1;
+      if (soft) {
+        const d = Math.hypot(pos.getX(i) - px, pos.getY(i) - py, pos.getZ(i) - pz);
+        if (d < BLEND_RADIUS) {
+          const share = 0.5 * (1 - d / BLEND_RADIUS) ** 2;
+          w = 1 - share;
+          si[i * 4 + 1] = index[p.parent];
+          sw[i * 4 + 1] = share;
+        }
+      }
+      sw[i * 4] = w;
+    }
+    g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
+    g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
+    geos.push(g);
+  }
+  template.skinGeo = geos.length ? mergeGeometries(geos) : null;
+  geos.forEach((g) => g.dispose());
+  if (template.skinGeo) {
+    template.skinGeo.computeBoundingSphere();
+    template.skinGeo.boundingSphere.radius *= 1.6;
+  }
+  return template.skinGeo;
+}
+
+/**
+ * Creates a model from a template. With `skin`, the parts become a bone hierarchy driving
+ * one SkinnedMesh (only props and glowing parts stay rigid); `groups` then holds the
+ * bones, so the Animator poses joints the same way either way.
+ */
+function instantiate(template, { skin = false } = {}) {
   const root = new THREE.Group();
   root.rotation.order = 'YXZ';
   const groups = { root };
   const meshes = [];
+  const skinGeo = skin ? skinGeometry(template) : null;
+  const rootBone = skinGeo ? new THREE.Bone() : null;
+  const bones = rootBone ? [rootBone] : [];
+  const parentOf = (name) => (name === 'root' ? rootBone ?? root : groups[name]);
   for (const p of template.parts) {
-    const g = new THREE.Group();
+    const g = skinGeo ? new THREE.Bone() : new THREE.Group();
     g.position.set(...p.offset);
-    groups[p.parent].add(g);
+    parentOf(p.parent).add(g);
     groups[p.name] = g;
-    if (p.geo) {
+    if (skinGeo) bones.push(g);
+    const rigid = p.geo && (!skinGeo || p.mat !== unitMat || RIGID_PARTS.has(p.name));
+    if (rigid) {
       const mesh = new THREE.Mesh(p.geo, p.mat);
       mesh.castShadow = true;
       mesh.receiveShadow = p.mat === towerMat;
@@ -243,6 +326,16 @@ function instantiate(template) {
       g.add(mesh);
       if (p.mat !== flameMat && p.mat !== visorMat) meshes.push(mesh);
     }
+  }
+  if (skinGeo) {
+    const mesh = new THREE.SkinnedMesh(skinGeo, unitMat);
+    mesh.castShadow = true;
+    mesh.userData.baseMat = unitMat;
+    mesh.add(rootBone);
+    root.add(mesh);
+    root.updateMatrixWorld(true);
+    mesh.bind(new THREE.Skeleton(bones));
+    meshes.push(mesh);
   }
   for (const [name, pose] of Object.entries(template.base ?? {})) groups[name]?.rotation.set(...pose);
   return { root, groups, meshes };
@@ -341,7 +434,7 @@ const crownGeos = (P, y, r) => {
 };
 
 /** Little gun on a wooden carriage; `barrel` rotates/recoils, `muzzle` marks the tip. */
-function cannonParts(def, { ox = 0, oz = 0, scale = 1, parent = 'root' } = {}) {
+function cannonParts(def, { ox = 0, oz = 0, scale = 1, parent = 'root', ornate = false } = {}) {
   const S = (x, y, z) => [ox + x * scale, y * scale, oz + z * scale];
   const base = addPart(def, 'carriage', parent, S(0, 0, 0));
   base.geos.push(
@@ -357,6 +450,13 @@ function cannonParts(def, { ox = 0, oz = 0, scale = 1, parent = 'root' } = {}) {
       place(G.box, C.iron, S(0.34 * sx, 0.45, 0.3), 0, [0.1 * scale, 0.1 * scale, 0.1 * scale]),
     );
   }
+  if (ornate) {
+    base.geos.push(
+      place(G.box, C.goldDark, S(0, 0.43, 0.42), 0, [0.72 * scale, 0.07 * scale, 0.08 * scale]),
+      place(G.diamond, C.gold, S(0.32, 0.44, 0.49), 0, 0.065 * scale),
+      place(G.diamond, C.gold, S(-0.32, 0.44, 0.49), 0, 0.065 * scale),
+    );
+  }
   const barrel = addPart(def, 'barrel', 'carriage', S(0, 0.58, 0));
   barrel.geos.push(
     place(G.cyl, C.iron, S(0, 0.6, 0.22), [Math.PI / 2, 0, 0], [0.15 * scale, 1.05 * scale, 0.15 * scale]),
@@ -366,6 +466,12 @@ function cannonParts(def, { ox = 0, oz = 0, scale = 1, parent = 'root' } = {}) {
     place(G.sphere, C.iron, S(0, 0.6, -0.36), 0, 0.15 * scale),
     place(G.cylLo, C.goldDark, S(0, 0.6, 0.02), [0, 0, Math.PI / 2], [0.05 * scale, 0.5 * scale, 0.05 * scale]),
   );
+  if (ornate) {
+    barrel.geos.push(
+      place(G.cyl, C.goldDark, S(0, 0.6, 0.58), [Math.PI / 2, 0, 0], [0.205 * scale, 0.055 * scale, 0.205 * scale]),
+      place(G.cyl, C.ironLight, S(0, 0.6, 0.69), [Math.PI / 2, 0, 0], [0.225 * scale, 0.055 * scale, 0.225 * scale]),
+    );
+  }
   addPart(def, 'muzzle', 'barrel', S(0, 0.6, 0.85));
 }
 
@@ -586,7 +692,7 @@ const UNIT_SIZE = 1.25;
 
 export function buildUnit(cardId, team) {
   const t = template(cardId, team);
-  const rig = instantiate(t);
+  const rig = instantiate(t, { skin: true });
   const scale = t.scale * UNIT_SIZE;
   rig.root.scale.setScalar(scale);
   const height = (t.mount ? RIG_HEIGHT + 0.45 : RIG_HEIGHT) * scale + (t.air ? AIR_LIFT : 0);
@@ -665,30 +771,61 @@ function kingTowerDef(def, team) {
   const body = addPart(def, 'tower', 'root', [0, 0, 0]);
   body.mat = towerMat;
   const g = body.geos;
-  g.push(place(G.cylLo, C.dirt, [0, 0.1, 0], 0, [2.35, 0.2, 2.35]));
-  g.push(place(G.cylLo, C.grass, [0, 0.24, 0], 0, [2.25, 0.12, 2.25]));
-  g.push(place(G.box, C.greyDark, [0, 0.45, 0], 0, [3.5, 0.4, 3.5]));
-  g.push(place(G.box, C.grey, [0, 2.15, 0], 0, [3.05, 3.1, 3.05]));
+  const cloth = TEAM_CLOTH[team];
+  const darkCloth = TEAM_CLOTH_DARK[team];
+
+  // Turf display base and stepped keep.
+  g.push(place(G.cylLo, C.dirt, [0, 0.1, 0], 0, [2.38, 0.2, 2.38]));
+  g.push(place(G.cylLo, C.grass, [0, 0.25, 0], 0, [2.3, 0.13, 2.3]));
+  g.push(place(G.box, C.stoneDark, [0, 0.42, 0], 0, [3.55, 0.38, 3.55]));
+  g.push(place(G.box, C.grey, [0, 2.1, 0], 0, [3.02, 3.05, 3.02]));
+  g.push(place(G.box, C.greyDark, [0, 0.66, 0], 0, [3.25, 0.26, 3.25]));
+
+  // Four pale corner buttresses give the tower its chunky tapered silhouette.
   for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-    g.push(place(G.box, C.greyLight, [1.45 * sx, 2.3, 1.45 * sz], 0, [0.78, 3.6, 0.78]));
-    g.push(place(G.box, C.greyLight, [1.45 * sx, 4.25, 1.45 * sz], 0, [0.85, 0.5, 0.85]));
-    g.push(place(G.sphereLo, C.gold, [1.86 * sx, 3.2, 1.86 * sz], 0, 0.14));
-    g.push(place(G.sphereLo, C.gold, [1.86 * sx, 1.3, 1.86 * sz], 0, 0.14));
+    g.push(place(G.box, C.greyLight, [1.43 * sx, 2.22, 1.43 * sz], 0, [0.78, 3.45, 0.78]));
+    g.push(place(G.box, C.stone, [1.48 * sx, 0.78, 1.48 * sz], 0, [0.98, 0.75, 0.98]));
+    g.push(place(G.box, C.greyLight, [1.43 * sx, 4.08, 1.43 * sz], 0, [0.88, 0.48, 0.88]));
+    g.push(place(G.diamond, C.gold, [1.86 * sx, 2.76, 1.86 * sz], 0, [0.16, 0.21, 0.11]));
+    g.push(place(G.diamond, C.goldDark, [1.7 * sx, 0.68, 1.7 * sz], 0, [0.11, 0.14, 0.09]));
   }
-  for (const [x, z, ry] of [[0.62, 1.54, 0], [-0.62, 1.54, 0], [1.54, 0, Math.PI / 2], [-1.54, 0, Math.PI / 2], [0, -1.54, 0]]) {
-    g.push(place(G.box, TEAM_CLOTH[team], [x, 2.6, z], [0, ry, 0], [0.72, 1.3, 0.05]));
-    g.push(place(G.box, C.gold, [x * 1.01, 2.85, z * 1.01], [0, ry, 0], [0.34, 0.08, 0.05]));
-    for (const dx of [-0.12, 0, 0.12]) {
-      const off = ry ? [0, 0, dx] : [dx, 0, 0];
-      g.push(place(G.coneLo, C.gold, [x * 1.01 + off[0], 2.95, z * 1.01 + off[2]], 0, [0.04, 0.12, 0.04]));
-    }
+
+  // Arched oak entrance, stone voussoirs and a short path.
+  g.push(place(G.box, 0x241a14, [0, 1.13, 1.535], 0, [0.86, 1.04, 0.07]));
+  g.push(place(G.cyl, 0x241a14, [0, 1.65, 1.535], [Math.PI / 2, 0, 0], [0.43, 0.07, 0.43]));
+  g.push(place(G.box, C.woodDark, [0, 1.12, 1.575], 0, [0.7, 0.98, 0.06]));
+  g.push(place(G.cyl, C.woodDark, [0, 1.61, 1.575], [Math.PI / 2, 0, 0], [0.35, 0.06, 0.35]));
+  g.push(place(new THREE.TorusGeometry(0.45, 0.09, 5, 18, Math.PI), C.stoneLight, [0, 1.65, 1.59], 0));
+  for (const x of [-0.44, 0.44]) g.push(place(G.box, C.stoneLight, [x, 1.13, 1.59], 0, [0.16, 1.08, 0.16]));
+  for (const x of [-0.22, 0, 0.22]) g.push(place(G.box, C.iron, [x, 1.23, 1.62], 0, [0.035, 0.72, 0.035]));
+  g.push(place(G.box, C.iron, [0, 1.12, 1.625], 0, [0.72, 0.045, 0.035]));
+  g.push(place(G.box, C.greyDark, [0, 0.54, 2.02], 0, [1.12, 0.12, 0.7]));
+  g.push(place(G.box, C.stoneDark, [0, 0.44, 2.42], 0, [0.82, 0.1, 0.42]));
+
+  // Main shield banner and smaller side standards.
+  g.push(place(G.banner, cloth, [0, 2.75, 1.57], 0, [1.05, 1.45, 0.07]));
+  g.push(place(G.box, C.goldDark, [0, 3.44, 1.625], 0, [1.2, 0.11, 0.08]));
+  for (const [x, ry] of [[1.56, Math.PI / 2], [-1.56, Math.PI / 2]]) {
+    g.push(place(G.banner, darkCloth, [x, 2.42, 0.18], [0, ry, 0], [0.62, 1.05, 0.07]));
+    g.push(place(G.box, C.goldDark, [x * 1.01, 2.91, 0.18], [0, ry, 0], [0.72, 0.08, 0.08]));
   }
-  g.push(place(G.box, C.woodDark, [0, 1.15, 1.53], 0, [0.85, 1.05, 0.06]));
-  g.push(place(G.cyl, C.woodDark, [0, 1.68, 1.53], [Math.PI / 2, 0, 0], [0.425, 0.06, 0.425]));
-  g.push(place(G.box, C.greyDark, [0, 0.62, 2.0], 0, [1.1, 0.12, 0.6]));
-  g.push(place(G.box, C.greyDark, [0, 3.72, 0], 0, [3.2, 0.2, 3.2]));
-  for (const [x, z] of [[0, 1.5], [0, -1.5], [1.5, 0], [-1.5, 0]]) g.push(place(G.box, C.greyLight, [x, 4.0, z], 0, [0.5, 0.45, 0.5]));
-  return 3.82;
+
+  // Blocky gold crown crest on the front banner.
+  g.push(place(G.box, C.goldDark, [0, 2.65, 1.635], 0, [0.64, 0.13, 0.06]));
+  for (const [x, h] of [[-0.24, 0.29], [0, 0.4], [0.24, 0.29]]) {
+    g.push(place(G.box, C.gold, [x, 2.82 + (h - 0.29) / 2, 1.64], 0, [0.13, h, 0.065]));
+    g.push(place(G.diamond, C.gold, [x, 2.99 + (h - 0.29), 1.64], 0, [0.09, 0.1, 0.055]));
+  }
+
+  // Heavy parapet and alternating crenellations around the roof.
+  g.push(place(G.box, C.woodDark, [0, 3.56, 0], 0, [3.18, 0.18, 3.18]));
+  g.push(place(G.box, C.greyDark, [0, 3.72, 0], 0, [3.28, 0.18, 3.28]));
+  for (const [x, z] of [
+    [-1.35, 1.5], [-0.45, 1.5], [0.45, 1.5], [1.35, 1.5],
+    [-1.35, -1.5], [-0.45, -1.5], [0.45, -1.5], [1.35, -1.5],
+    [-1.5, -0.5], [-1.5, 0.5], [1.5, -0.5], [1.5, 0.5],
+  ]) g.push(place(G.box, C.greyLight, [x, 4.0, z], 0, [0.48, 0.48, 0.48]));
+  return 3.76;
 }
 
 const towerTemplates = new Map();
@@ -703,17 +840,17 @@ function towerTemplate(kind, team) {
     const crew = {};
     const cloth = TEAM_CLOTH[team];
     if (king) {
-      const m = mascot(crew, { torso: cloth, sleeve: cloth, legs: TEAM_CLOTH_DARK[team], feet: C.leatherDark, bulk: 1.08 });
+      const m = mascot(crew, { ox: -0.5, oz: -0.12, torso: cloth, sleeve: cloth, legs: TEAM_CLOTH_DARK[team], feet: C.leatherDark, bulk: 1.08 });
       m.add('head', ...crownGeos(m.P, 1.04, 0.17));
       for (const sx of [1, -1]) {
         m.add('head', place(capsule(0.032, 0.1), 0x1b1b1f, m.P(0.07 * sx, 0.748, 0.25), [0, 0, 1.25 * sx]));
         m.add('head', place(G.box, 0x1b1b1f, m.P(0.08 * sx, 0.9, 0.245), [0, 0, -0.2 * sx], [0.08, 0.025, 0.02]));
       }
-      m.add('body', place(G.cone, cloth, m.P(0, 0.24, 0), 0, [0.3, 0.46, 0.27]));
+      m.add('body', place(G.banner, cloth, m.P(0, 0.44, -0.2), [0, Math.PI, 0], [0.48, 0.65, 0.035]));
       m.add('body', place(G.sphere, 0xf4efe6, m.P(0, 0.56, -0.01), 0, [0.27, 0.06, 0.23]));
       m.add('body', place(G.box, C.gold, m.P(0, 0.42, 0.205), 0, [0.04, 0.24, 0.012]));
       belt(m, C.gold, C.goldDark, 0.3, 1.08);
-      cannonParts(crew, { ox: 0.95, oz: 0.15, scale: 0.85 });
+      cannonParts(crew, { ox: 0.28, oz: 0.2, scale: 1.02, ornate: true });
     } else {
       const m = mascot(crew, { torso: cloth, sleeve: cloth, legs: TEAM_CLOTH_DARK[team], feet: C.leatherDark });
       // Pink bob: cap, fringe of bangs and side locks.
@@ -729,7 +866,14 @@ function towerTemplate(kind, team) {
     }
     const crewParts = compile(crew);
     const towerParts = compile(def, towerMat);
-    towerTemplates.set(key, { parts: towerParts, crew: { parts: crewParts }, top, style: king ? 'king' : 'bow', launch: king ? 'muzzle' : 'foreL' });
+    towerTemplates.set(key, {
+      parts: towerParts,
+      crew: { parts: crewParts },
+      top,
+      crewHeight: RIG_HEIGHT * crewScale,
+      style: king ? 'king' : 'bow',
+      launch: king ? 'muzzle' : 'foreL',
+    });
   }
   return towerTemplates.get(key);
 }
@@ -738,11 +882,14 @@ function towerTemplate(kind, team) {
 export function makeTowerObject(kind, team) {
   const t = towerTemplate(kind, team);
   const tower = instantiate(t);
-  const crew = instantiate(t.crew);
+  const crew = instantiate(t.crew, { skin: true });
   crew.root.position.y = t.top;
   crew.root.rotation.y = team === 0 ? Math.PI : 0;
   tower.root.add(crew.root);
-  tower.root.userData = { body: tower.groups.tower, crew: { ...crew, style: t.style, scale: 1, launch: crew.groups[t.launch], base: {} } };
+  tower.root.userData = {
+    body: tower.groups.tower,
+    crew: { ...crew, style: t.style, scale: 1, height: t.crewHeight, launch: crew.groups[t.launch], base: {} },
+  };
   return tower.root;
 }
 
@@ -785,7 +932,7 @@ export class Animator {
   }
 
   /** opts: moving, speed (tiles/s), deploy (seconds left), dying (0..1), asleep */
-  update(dt, t, { moving = false, speed = 1, deploy = 0, dying = null, deathStyle = null, asleep = false, frozen = false, sink = 0 } = {}) {
+  update(dt, t, { moving = false, speed = 1, deploy = 0, dying = null, deathStyle = null, asleep = false, frozen = false, sink = 0, stagger = false } = {}) {
     const g = this.g;
     // Frozen units hold whatever pose they were in.
     if (frozen && dying == null) return;
@@ -873,6 +1020,20 @@ export class Animator {
       g.wingR.rotation.z -= 0.3 + flap;
     }
     if (g.prop) g.prop.visible = !(tau > S * 0.5 && tau < Math.max(0.5, H * 0.6));
+
+    // Knocked back: lean away from the blow with the arms thrown out, easing back upright.
+    this.st = (this.st ?? 0) + ((stagger ? 1 : 0) - (this.st ?? 0)) * Math.min(1, dt * (stagger ? 18 : 6));
+    if (this.st > 0.01) {
+      const k = this.st;
+      add('body', 'x', -0.42 * k);
+      add('head', 'x', -0.25 * k);
+      add('armL', 'z', 0.75 * k);
+      add('armR', 'z', -0.75 * k);
+      add('armL', 'x', -0.6 * k);
+      add('armR', 'x', -0.6 * k);
+      add('legL', 'x', 0.35 * k);
+      add('legR', 'x', -0.2 * k);
+    }
 
     // Flinch on damage.
     if (this.hit > 0 && g.body) {

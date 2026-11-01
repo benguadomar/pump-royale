@@ -235,7 +235,8 @@ function allow(ws) {
     ws.tokens -= 1;
     return true;
   }
-  if (++ws.strikes > MAX_STRIKES) {
+  if (++ws.strikes > MAX_STRIKES && !ws.flooded) {
+    ws.flooded = true;
     log.warn('flood disconnect', { player: ws.player?.id });
     ws.close(1008, 'rate limit');
   }

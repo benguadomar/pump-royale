@@ -7,6 +7,7 @@ import {
 import { ReplayDriver } from '../src/sim/replay.js';
 import { randomDeck, rng } from '../src/sim/sim.js';
 import { signResult } from './auth.js';
+import { SIM_VERSION } from '../src/sim/constants.js';
 
 const AI_MATCH_TTL_MS = 15 * 60 * 1000;
 const MAX_INPUTS = 800;
@@ -96,7 +97,7 @@ export class Economy {
       if (it[2] === 'forfeit') clean.push([tick, 0, 'forfeit']);
       else if (Number.isFinite(it[3]) && Number.isFinite(it[4])) clean.push([tick, 0, Number(it[2]) & 3, Number(it[3]), Number(it[4])]);
     }
-    const record = { mode: 'ai', seed: match.seed, decks: match.decks, levels: match.levels, cardLevels: match.cardLevels, inputs: clean };
+    const record = { v: SIM_VERSION, mode: 'ai', seed: match.seed, decks: match.decks, levels: match.levels, cardLevels: match.cardLevels, inputs: clean };
     const sim = new ReplayDriver(record).runToEnd();
     const r = sim.result(0);
     const p = this.profile(id);
@@ -125,7 +126,7 @@ export class Economy {
       this.save(room.players[team].id, p);
       out.push({ summary, profile: p });
     }
-    const record = { mode: 'pvp', seed: room.sim.seed, decks: room.players.map((pl) => pl.deck), levels: room.levels, cardLevels: room.cardLevels, inputs: room.inputs };
+    const record = { v: SIM_VERSION, mode: 'pvp', seed: room.sim.seed, decks: room.players.map((pl) => pl.deck), levels: room.levels, cardLevels: room.cardLevels, inputs: room.inputs };
     const mode = ranked ? 'pvp' : 'friendly';
     for (const team of [0, 1]) {
       await this.storeReplay(room.players[team].id, { record, result: room.sim.result(team), opp: room.players[1 - team].name, mode, team, sig: room.signed?.sig });

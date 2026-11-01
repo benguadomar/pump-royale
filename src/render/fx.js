@@ -2,6 +2,10 @@ import * as THREE from 'three/webgpu';
 import { particlePosition, particleColor, FX_TYPE } from './shaders.js';
 
 const CAPACITY = 4000;
+/** World gravity for falling particles (m/s²), and how much bounce / ground grip they keep. */
+const G = 9.8;
+const BOUNCE = 0.35;
+const GROUND_GRIP = 0.55;
 const rand = (a, b) => a + Math.random() * (b - a);
 
 /**
@@ -126,18 +130,77 @@ export class Fx {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const s = rand(0.4, 1) * speed;
-      this.spawn('spark', pos, { size: rand(0.12, 0.25), life: rand(0.3, 0.7), vel: [Math.cos(a) * s, rand(1, 4), Math.sin(a) * s], drag: 1.5, gravity: 9, tint: color });
+      this.spawn('spark', pos, { size: rand(0.12, 0.25), life: rand(0.3, 0.7), vel: [Math.cos(a) * s, rand(1, 4), Math.sin(a) * s], drag: 1.5, gravity: G, tint: color });
     }
   }
 
-  /** Splash impact sized to the attack's splash radius (fireball / bomb). */
+  /** Chunks of dirt/stone thrown out ballistically; they fall, bounce and skid to rest. */
+  debris(pos, n = 8, speed = 4, tint = [0.55, 0.45, 0.35], size = 0.18) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = rand(0.35, 1) * speed;
+      this.spawn('spark', { x: pos.x, y: pos.y, z: pos.z }, { size: size * rand(0.7, 1.4), life: rand(0.9, 1.6), vel: [Math.cos(a) * s, rand(2.5, 5.5), Math.sin(a) * s], gravity: G, drag: 0.3, tint, spin: rand(-6, 6) });
+    }
+  }
+
+  /**
+   * A blow landing: sparks spray along the hit direction (dx, dz) — the momentum of the
+   * strike — with a flash and a small ground ring. `power` 0..1 scales everything.
+   */
+  impact(pos, dx, dz, power = 0.5, tint = [1, 0.9, 0.7]) {
+    const len = Math.hypot(dx, dz) || 1;
+    const ux = dx / len;
+    const uz = dz / len;
+    this.spawn('glow', pos, { size: 0.7 + power * 1.3, life: 0.12 + power * 0.08, tint });
+    const n = Math.round(4 + power * 12);
+    for (let i = 0; i < n; i++) {
+      const spread = rand(-0.9, 0.9);
+      const s = rand(2, 5) * (0.6 + power);
+      const vx = (ux + -uz * spread) * s;
+      const vz = (uz + ux * spread) * s;
+      this.spawn('spark', pos, { size: rand(0.08, 0.18) * (0.8 + power), life: rand(0.25, 0.55), vel: [vx, rand(0.8, 3.5), vz], drag: 2, gravity: G, tint });
+    }
+    if (power > 0.45) this.spawn('ring', { x: pos.x, y: 0.08, z: pos.z }, { size: 1 + power * 1.6, life: 0.3, tint });
+  }
+
+  /** Dust kicked up by a heavy footfall. */
+  footstep(pos, size = 1) {
+    for (let i = 0; i < 3; i++) {
+      this.spawn('smoke', { x: pos.x + rand(-0.2, 0.2) * size, y: 0.12, z: pos.z + rand(-0.2, 0.2) * size }, { size: 0.45 * size, life: rand(0.5, 0.8), vel: [rand(-0.6, 0.6), rand(0.2, 0.5), rand(-0.6, 0.6)], grow: 0.7 * size, drag: 3, tint: [0.82, 0.74, 0.62] });
+    }
+    if (size > 1.2) this.spawn('ring', { x: pos.x, y: 0.07, z: pos.z }, { size: size * 1.1, life: 0.35, tint: [0.85, 0.78, 0.65] });
+  }
+
+  /** Dust trail of a troop being shoved backwards, thrown opposite to its slide. */
+  skid(pos, vx, vz, size = 1) {
+    this.spawn('smoke', { x: pos.x + rand(-0.15, 0.15), y: 0.12, z: pos.z + rand(-0.15, 0.15) }, { size: 0.4 * size, life: rand(0.4, 0.7), vel: [-vx * 0.3 + rand(-0.3, 0.3), rand(0.3, 0.7), -vz * 0.3 + rand(-0.3, 0.3)], grow: 0.8 * size, drag: 2.5, tint: [0.84, 0.76, 0.64] });
+    if (Math.random() < 0.4) this.debris({ x: pos.x, y: 0.1, z: pos.z }, 1, 1.5, [0.5, 0.42, 0.3], 0.09);
+  }
+
+  /** A unit leaving the field: a puff, a ring and a little light rising away. */
+  poof(pos, size = 1, tint = [1, 1, 1]) {
+    this.spawn('ring', { x: pos.x, y: 0.08, z: pos.z }, { size: 1.3 * size, life: 0.4, tint: [0.95, 0.95, 0.95] });
+    this.smoke({ x: pos.x, y: 0.4, z: pos.z }, Math.round(5 + size * 3), 0.35 * size, 0.85 * size);
+    this.spawn('glow', { x: pos.x, y: 0.9, z: pos.z }, { size: 0.8 * size, life: 0.9, vel: [0, 1.6, 0], drag: 0.8, tint });
+  }
+
+  /** Splash impact sized to the attack's splash radius (fireball / bomb): flash, blast ring, fire, debris, then rolling smoke. */
   explosion(pos, radius, kind) {
     const size = radius * 2;
+    const hot = kind === 'fireball' ? [1, 0.55, 0.2] : [1, 0.82, 0.55];
     this.spawn('scorch', { x: pos.x, y: 0.07, z: pos.z }, { size: size * 1.1, life: 6 });
-    this.shockwave({ x: pos.x, y: 0, z: pos.z }, kind === 'fireball' ? [1, 0.55, 0.2] : [1, 0.9, 0.7], size * 1.3);
-    this.fire({ x: pos.x, y: 0.4, z: pos.z }, kind === 'fireball' ? 16 : 10, radius * 0.5, radius * 0.9);
-    this.smoke({ x: pos.x, y: 0.5, z: pos.z }, 8, radius * 0.5, radius * 0.9);
-    this.sparks({ x: pos.x, y: 0.6, z: pos.z }, 12);
+    this.spawn('glow', { x: pos.x, y: 0.8, z: pos.z }, { size: size * 2.2, life: 0.18, tint: hot });
+    this.shockwave({ x: pos.x, y: 0, z: pos.z }, hot, size * 1.3);
+    this.fire({ x: pos.x, y: 0.4, z: pos.z }, kind === 'fireball' ? 18 : 12, radius * 0.5, radius * 0.95);
+    this.debris({ x: pos.x, y: 0.3, z: pos.z }, 10, 3 + radius * 2.2);
+    this.sparks({ x: pos.x, y: 0.6, z: pos.z }, 16, [1, 0.75, 0.35], 7);
+    let t = 0;
+    this.emit(0.35, (dt) => {
+      t += dt;
+      if (t < 0.12) return;
+      t = 0;
+      this.smoke({ x: pos.x, y: 0.6, z: pos.z }, 3, radius * 0.6, radius);
+    });
   }
 
   hitPuff(pos, color = [1, 1, 1]) {
@@ -182,9 +245,13 @@ export class Fx {
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       p.z += p.vz * dt;
+      // Falling particles hit the ground: lose speed to restitution and friction, then settle.
       if (p.gravity && p.y < 0.05) {
         p.y = 0.05;
-        p.vy *= -0.3;
+        p.vy = p.vy < -0.6 ? -p.vy * BOUNCE : 0;
+        p.vx *= GROUND_GRIP;
+        p.vz *= GROUND_GRIP;
+        p.spin *= GROUND_GRIP;
       }
       p.size += p.grow * dt;
       p.rot += p.spin * dt;

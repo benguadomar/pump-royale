@@ -5,6 +5,7 @@ import ws from 'ws';
 import { Pool, neonConfig } from '@neondatabase/serverless';
 import { log } from './log.js';
 import { CARD_BY_ID } from '../src/data/cards.js';
+import { SIM_VERSION } from '../src/sim/constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, 'data');
@@ -64,8 +65,8 @@ CREATE TABLE IF NOT EXISTS docs (
 );
 `;
 
-/** Replays that use retired cards can no longer be simulated; they are hidden. */
-const playable = (r) => r?.record?.decks?.every((d) => d.every((id) => CARD_BY_ID[id])) ?? false;
+/** Replays recorded under older rules, or with retired cards, can no longer be re-simulated; they are hidden. */
+const playable = (r) => (r?.record?.v ?? 1) === SIM_VERSION && (r.record.decks?.every((d) => d.every((id) => CARD_BY_ID[id])) ?? false);
 
 const blank = (name, country) => ({ name, country, towers: 0, cards: 0, wins: 0, losses: 0, pvpWins: 0, pvpLosses: 0, streak: 0, bestStreak: 0 });
 
