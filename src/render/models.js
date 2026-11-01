@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { vec3 } from 'three/tsl';
-import { surfaceColor, surfaceRoughness, surfaceMetalness, windPosition, rimLight, SURF } from './shaders.js';
+import { surfaceColor, surfaceRoughness, surfaceMetalness, windPosition, SURF } from './shaders.js';
+import { makeUnitMaterial, makeSculptMaterial } from './unitShading.js';
 /**
  * Procedural low-poly 3D models for every card and tower, built from primitives in the
  * style of the card art (a pale round-headed mascot in costumes), plus the animator that
@@ -48,6 +48,7 @@ const C = {
   hairBrown: 0x6b4a2b,
   armorDark: 0x3d4766,
   armorPlate: 0x6a78a6,
+  linen: 0xe6dcc8,
 };
 
 // ------------------------------------------------------------------ materials
@@ -62,20 +63,13 @@ export function makeSurfaceMaterial({ flat = true } = {}) {
   return m;
 }
 
-function makeUnitMaterial(glow) {
-  const m = new THREE.MeshStandardNodeMaterial({ vertexColors: true });
-  m.roughnessNode = surfaceRoughness;
-  m.metalnessNode = surfaceMetalness;
-  m.emissiveNode = glow ? rimLight.add(vec3(...glow)) : rimLight;
-  return m;
-}
-
+const TINTS = { flash: [0.55, 0.12, 0.08], frozen: [0.2, 0.45, 0.65], rage: [0.4, 0.05, 0.48] };
 const unitMat = makeUnitMaterial(null);
 const towerMat = makeSurfaceMaterial();
-export const flashMat = makeUnitMaterial([0.55, 0.12, 0.08]);
+export const flashMat = makeUnitMaterial(TINTS.flash);
 /** Status tints: ice blue while frozen, purple while enraged. */
-export const frozenMat = makeUnitMaterial([0.2, 0.45, 0.65]);
-export const rageMat = makeUnitMaterial([0.4, 0.05, 0.48]);
+export const frozenMat = makeUnitMaterial(TINTS.frozen);
+export const rageMat = makeUnitMaterial(TINTS.rage);
 const flameMat = new THREE.MeshBasicMaterial({ color: 0xffc35a });
 const visorMat = new THREE.MeshBasicMaterial({ color: 0x8ff8ff });
 
@@ -183,8 +177,7 @@ function place(geo, color, pos = [0, 0, 0], rot = [0, 0, 0], scale = [1, 1, 1]) 
 }
 
 /** A bow arc lying in the local Y/Z plane, bulging toward -Y, its grip at `hand`. */
-function bowGeos(hand, color) {
-  const R = 0.24;
+function bowGeos(hand, color, R = 0.24) {
   const arc = 2.2;
   const torus = new THREE.TorusGeometry(R, 0.018, 5, 14, arc).rotateZ(-arc / 2).rotateZ(-Math.PI / 2).rotateY(-Math.PI / 2);
   const center = [hand[0], hand[1] + R, hand[2]];
@@ -227,6 +220,8 @@ function compile(def, mat = unitMat) {
     let geo = null;
     if (p.geos.length) {
       geo = mergeGeometries(p.geos);
+      // Rest-pose position for the unit shaders' surface detail.
+      geo.setAttribute('rest', geo.attributes.position.clone());
       geo.translate(-p.pivot[0], -p.pivot[1], -p.pivot[2]);
       p.geos.forEach((g) => g.dispose());
     }
@@ -242,7 +237,7 @@ const RIGID_PARTS = new Set(['prop']);
 /** Joints whose skin blends into the parent bone near the pivot (shoulder, elbow, hip, knee, neck). */
 const SOFT_JOINTS = new Set(['head', 'armL', 'armR', 'foreL', 'foreR', 'legL', 'legR', 'shinL', 'shinR', 'pl0', 'pl1', 'pl2', 'pl3']);
 /** Skin within this distance of a soft joint's pivot is shared with the parent bone (model units). */
-const BLEND_RADIUS = 0.1;
+const BLEND_RADIUS = 0.06;
 
 /**
  * Builds (once per template) a single skinned geometry from every unit-material part:
@@ -343,11 +338,20 @@ function instantiate(template, { skin = false } = {}) {
 /** Slightly darker version of a colour (creases, soles). */
 const shade = (hex, k) => new THREE.Color(hex).multiplyScalar(k).getHex();
 
+/** Hips-to-collar torso profile (radius, height): narrow waist, broad chest, sloping shoulders. */
+const TORSO = new THREE.LatheGeometry(
+  [[0, 0], [0.1, 0.004], [0.126, 0.035], [0.122, 0.08], [0.116, 0.115], [0.126, 0.16], [0.145, 0.21], [0.152, 0.245], [0.138, 0.275], [0.09, 0.298], [0, 0.31]].map(([r, y]) => new THREE.Vector2(r, y)),
+  20,
+);
+/** Front-to-back depth of the torso relative to its width. */
+const TORSO_DEPTH = 0.74;
+
 /**
- * The card-art mascot: big round pale head with dot eyes, hooked nose and a smirk, a
- * chunky rounded body, stubby jointed arms with mitten hands and short legs. Pivots:
- * body at the hips, head at the neck, arm at the shoulder, fore at the elbow, leg at
- * the hip, shin at the knee. `o` picks outfit colours, build and an optional offset.
+ * The humanoid mascot from the card art, stylised at about 2.7 heads tall: a tapered torso
+ * with a neck, shoulders, jointed arms ending in fists with thumbs, thighs, shins and boots,
+ * and a head with a jaw, ears, eyes (whites and pupils), brows, nose and mouth. Pivots: body
+ * at the hips, head at the neck, arm at the shoulder, fore at the elbow, leg at the hip,
+ * shin at the knee. `o` picks outfit colours, build (`bulk`, `limb`, `fist`) and an offset.
  */
 function mascot(def, o = {}) {
   const ox = o.ox ?? 0;
@@ -365,70 +369,95 @@ function mascot(def, o = {}) {
   const parent = o.parent ?? 'root';
   const legsParent = o.legsParent ?? parent;
   const sides = [['L', 1], ['R', -1]];
-  const ax = 0.25 * b;
+  // Shoulder joints sit just outside the chest; hips a little inside the pelvis.
+  const ax = 0.152 * b + 0.036 * limb;
+  const hx = 0.066 * b + 0.004 * limb;
+  const headC = P(0, 0.83, 0);
+  const headR = [0.165, 0.18, 0.168];
 
-  addPart(def, 'body', parent, P(0, 0.26, 0));
-  addPart(def, 'head', 'body', P(0, 0.58, 0));
+  addPart(def, 'body', parent, P(0, 0.34, 0));
+  addPart(def, 'head', 'body', P(0, 0.64, 0));
   for (const [s, sx] of sides) {
-    addPart(def, `arm${s}`, 'body', P(ax * sx, 0.52, 0));
-    addPart(def, `fore${s}`, `arm${s}`, P(ax * sx, 0.4, 0));
+    addPart(def, `arm${s}`, 'body', P(ax * sx, 0.6, 0));
+    addPart(def, `fore${s}`, `arm${s}`, P(ax * sx, 0.445, 0));
   }
   for (const [s, sx] of sides) {
-    addPart(def, `leg${s}`, legsParent, P(0.11 * sx * b, 0.26, 0));
-    addPart(def, `shin${s}`, `leg${s}`, P(0.11 * sx * b, 0.13, 0));
+    addPart(def, `leg${s}`, legsParent, P(hx * sx, 0.34, 0));
+    addPart(def, `shin${s}`, `leg${s}`, P(hx * sx, 0.19, 0));
   }
   const add = (name, ...g) => def[name].geos.push(...g);
 
-  // Chunky pear-shaped torso.
-  add('body', place(G.sphere, torso, P(0, 0.42, 0), 0, [0.245 * b, 0.21, 0.205 * b]));
-  add('body', place(G.sphere, o.belly ?? torso, P(0, 0.33, 0.01), 0, [0.235 * b, 0.16, 0.205 * b]));
-  for (const [, sx] of sides) add('body', place(G.sphere, sleeve, P(ax * 0.92 * sx, 0.52, 0), 0, 0.075 * limb));
+  // Torso, pelvis (in the trouser colour) and neck.
+  add('body', place(TORSO, torso, P(0, 0.33, 0), 0, [b, 1, TORSO_DEPTH * b]));
+  add('body', place(G.sphere, o.belly ?? legs, P(0, 0.365, 0), 0, [0.126 * b, 0.07, 0.094 * b]));
+  add('body', place(G.cyl, skin, P(0, 0.64, 0), 0, [0.046, 0.09, 0.044]));
 
-  // Head and the card-art face.
-  add('head', place(G.sphere, skin, P(0, 0.8, 0), 0, [0.28, 0.272, 0.27]));
-  if (!o.noEyes) for (const [, sx] of sides) add('head', place(G.sphere, C.eye, P(0.078 * sx, 0.835, 0.252), 0, [0.026, 0.036, 0.012]));
-  if (!o.noNose) {
-    add('head', place(capsule(0.009, 0.035), C.eye, P(0.008, 0.79, 0.268), [0.15, 0, 0.12]));
-    add('head', place(new THREE.TorusGeometry(1, 0.32, 5, 10, Math.PI), C.eye, P(-0.004, 0.768, 0.266), [0, 0, Math.PI * 1.05], 0.016));
+  // Head: cranium, jaw, ears and the face.
+  add('head', place(G.sphere, skin, headC, 0, headR));
+  add('head', place(G.sphere, skin, P(0, 0.75, 0.022), 0, [0.135, 0.092, 0.13]));
+  for (const [, sx] of sides) add('head', place(G.sphere, shade(skin, 0.95), P(0.163 * sx, 0.8, -0.005), [0, 0.3 * sx, 0], [0.022, 0.042, 0.03]));
+  if (!o.noEyes) {
+    for (const [, sx] of sides) {
+      if (!o.dotEyes) add('head', place(G.sphere, 0xfafafa, P(0.06 * sx, 0.835, 0.151), [0, 0.35 * sx, 0], [0.032, 0.036, 0.014]));
+      add('head', place(G.sphere, C.eye, P(0.058 * sx, 0.832, o.dotEyes ? 0.155 : 0.162), [0, 0.35 * sx, 0], o.dotEyes ? [0.026, 0.032, 0.012] : [0.017, 0.022, 0.008]));
+    }
   }
-  if (!o.noMouth) add('head', place(new THREE.TorusGeometry(1, 0.2, 5, 12, Math.PI * 0.75), C.eye, P(0.035, 0.735, 0.252), [0.25, 0, Math.PI * 1.1], 0.045));
+  if (!o.noBrows) for (const [, sx] of sides) add('head', place(G.box, o.brow ?? 0x4a3a30, P(0.062 * sx, 0.882, 0.154), [0, 0.35 * sx, -0.14 * sx], [0.056, 0.013, 0.012]));
+  if (!o.noNose) add('head', place(G.sphere, shade(skin, 0.94), P(0, 0.792, 0.17), [0.3, 0, 0], [0.022, 0.03, 0.024]));
+  if (!o.noMouth) add('head', place(new THREE.TorusGeometry(1, 0.22, 5, 12, Math.PI * 0.8), C.mouth, P(0.005, 0.744, 0.152), [0.2, 0, Math.PI * 1.1], 0.032));
 
-  // Stubby arms with mitten hands.
+  // Arms: deltoid and upper arm, elbow, forearm, then a fist with a thumb.
   for (const [s, sx] of sides) {
     const x = ax * sx;
-    add(`arm${s}`, place(capsule(0.068 * limb, 0.05), sleeve, P(x, 0.46, 0)));
-    add(`fore${s}`, place(capsule(0.064 * limb, 0.05), o.forearm ?? sleeve, P(x, 0.35, 0)));
-    add(`fore${s}`, place(G.sphere, o.glove ?? skin, P(x, 0.28, 0.01), 0, [0.082 * fist, 0.078 * fist, 0.074 * fist]));
-    add(`fore${s}`, place(G.sphere, o.glove ?? skin, P(x - 0.05 * sx * fist, 0.3, 0.045 * fist), 0, 0.03 * fist));
+    add(`arm${s}`, place(G.sphere, sleeve, P(x, 0.592, 0), 0, 0.05 * limb));
+    add(`arm${s}`, place(capsule(0.041 * limb, 0.1), sleeve, P(x, 0.52, 0)));
+    add(`fore${s}`, place(G.sphere, o.forearm ?? sleeve, P(x, 0.445, 0), 0, 0.037 * limb));
+    add(`fore${s}`, place(capsule(0.036 * limb, 0.08), o.forearm ?? sleeve, P(x, 0.375, 0.004)));
+    const glove = o.glove ?? skin;
+    add(`fore${s}`, place(G.sphere, glove, P(x, 0.287, 0.008), 0, [0.036 * fist, 0.042 * fist, 0.032 * fist]));
+    add(`fore${s}`, place(G.sphere, glove, P(x - 0.002 * sx, 0.258, 0.022 * fist), [0.3, 0, 0], [0.036 * fist, 0.026 * fist, 0.03 * fist]));
+    add(`fore${s}`, place(capsule(0.012 * fist, 0.024 * fist), glove, P(x - 0.03 * sx * fist, 0.28, 0.026 * fist), [0.4, 0, 0.5 * sx]));
   }
-  // Short legs and rounded feet.
+  // Legs: thigh, knee, shin and a boot with a darker sole.
   for (const [s, sx] of sides) {
-    const x = 0.11 * sx * b;
-    add(`leg${s}`, place(capsule(0.08 * limb, 0.04), legs, P(x, 0.2, 0)));
-    add(`shin${s}`, place(capsule(0.074 * limb, 0.03), legs, P(x, 0.09, 0)));
-    add(`shin${s}`, place(G.sphere, feet, P(x, 0.045, 0.025), 0, [0.085 * limb, 0.055, 0.11 * limb]));
+    const x = hx * sx;
+    add(`leg${s}`, place(capsule(0.056 * limb, 0.09), legs, P(x, 0.265, 0)));
+    add(`shin${s}`, place(G.sphere, legs, P(x, 0.19, 0.004), 0, 0.05 * limb));
+    add(`shin${s}`, place(capsule(0.047 * limb, 0.07), legs, P(x, 0.125, 0)));
+    add(`shin${s}`, place(G.cyl, feet, P(x, 0.075, 0.004), 0, [0.053 * limb, 0.05, 0.053 * limb]));
+    add(`shin${s}`, place(G.sphere, feet, P(x, 0.04, 0.024), 0, [0.056 * limb, 0.042, 0.088 * limb]));
+    add(`shin${s}`, place(G.box, shade(feet, 0.55), P(x, 0.008, 0.024), 0, [0.088 * limb, 0.014, 0.15 * limb]));
   }
   return {
     P,
     add,
-    hand: (s) => P((s === 'L' ? 1 : -1) * ax, 0.28, 0.01),
-    headC: P(0, 0.8, 0),
+    b,
+    hand: (s) => P((s === 'L' ? 1 : -1) * ax, 0.275, 0.015),
+    headC,
+    /** Head-covering scale: the cranium radii grown by `k`. */
+    cover: (k = 1.08) => headR.map((r) => r * k),
+    headTop: headC[1] + headR[1],
+    beltY: 0.425,
   };
 }
 
-const belt = (m, color = C.leather, buckle = C.gold, y = 0.3, w = 1) => {
-  m.add('body', place(G.cyl, color, m.P(0, y, 0.005), 0, [0.238 * w, 0.055, 0.21 * w]));
-  m.add('body', place(G.box, buckle, m.P(0, y, 0.21 * w), 0, [0.075, 0.06, 0.018]));
-  m.add('body', place(G.box, shade(color, 0.6), m.P(0, y, 0.218 * w), 0, [0.04, 0.03, 0.012]));
+const belt = (m, color = C.leather, buckle = C.gold, dy = 0) => {
+  const y = m.beltY + dy;
+  const w = 0.124 * m.b;
+  const z = w * TORSO_DEPTH;
+  m.add('body', place(G.cyl, color, m.P(0, y, 0), 0, [w, 0.038, z]));
+  m.add('body', place(G.box, buckle, m.P(0, y, z + 0.002), 0, [0.05, 0.044, 0.014]));
+  m.add('body', place(G.box, shade(color, 0.6), m.P(0, y, z + 0.008), 0, [0.026, 0.02, 0.008]));
 };
 
 const crownGeos = (P, y, r) => {
-  const out = [place(G.cyl, C.gold, P(0, y, 0), 0, [r, 0.09, r])];
+  const k = r / 0.17;
+  const out = [place(G.cyl, C.gold, P(0, y, 0), 0, [r, 0.09 * k, r])];
   for (let i = 0; i < 6; i++) {
     const a = (i / 6) * Math.PI * 2;
-    out.push(place(G.coneLo, C.gold, P(Math.sin(a) * r * 0.9, y + 0.09, Math.cos(a) * r * 0.9), 0, [0.045, 0.1, 0.045]));
+    out.push(place(G.coneLo, C.gold, P(Math.sin(a) * r * 0.9, y + 0.09 * k, Math.cos(a) * r * 0.9), 0, [0.045 * k, 0.1 * k, 0.045 * k]));
   }
-  out.push(place(G.sphereLo, 0xe23d3d, P(0, y, r), 0, 0.03));
+  out.push(place(G.sphereLo, 0xe23d3d, P(0, y, r), 0, 0.03 * k));
   return out;
 };
 
@@ -519,111 +548,117 @@ const STYLES = {
 const BUILDERS = {
   archer(def, team) {
     const cloth = TEAM_CLOTH[team];
-    const m = mascot(def, { feet: C.leather });
-    m.add('head', place(G.hood, cloth, m.headC, 0, [0.302, 0.296, 0.296]));
-    m.add('head', place(G.coneLo, TEAM_CLOTH_DARK[team], m.P(0, 0.96, -0.24), [-0.9, 0, 0], [0.12, 0.26, 0.12]));
-    // Capelet over the shoulders.
-    m.add('body', place(G.cone, cloth, m.P(0, 0.5, -0.01), 0, [0.31, 0.3, 0.27]));
-    m.add('body', place(G.box, C.leather, m.P(0, 0.42, 0.19), [0, 0, 0.75], [0.04, 0.4, 0.025]));
+    const m = mascot(def, { torso: C.linen, sleeve: C.linen, legs: C.leatherDark, feet: C.leather });
+    m.add('head', place(G.hood, cloth, m.headC, 0, m.cover(1.1)));
+    m.add('head', place(G.coneLo, TEAM_CLOTH_DARK[team], m.P(0, 0.95, -0.15), [-0.9, 0, 0], [0.075, 0.17, 0.075]));
+    // Capelet over the shoulders, a bandolier and a tunic skirt.
+    m.add('body', place(G.cone, cloth, m.P(0, 0.585, -0.005), 0, [0.205, 0.17, 0.165]));
+    m.add('body', place(G.box, C.leather, m.P(0, 0.5, 0.108), [0, 0, 0.75], [0.024, 0.27, 0.014]));
+    m.add('body', place(G.cyl, cloth, m.P(0, 0.375, 0), 0, [0.135, 0.08, 0.104]));
     belt(m);
     // Quiver with fletched arrows on the back.
-    m.add('body', place(G.cyl, C.wood, m.P(0.1, 0.5, -0.22), [0.35, 0, -0.4], [0.06, 0.34, 0.06]));
-    for (let i = 0; i < 3; i++) m.add('body', place(G.box, 0xf6efe0, m.P(0.04 + i * 0.05, 0.72, -0.3), [0.35, 0, -0.4], [0.03, 0.09, 0.008]));
-    m.add('foreL', ...bowGeos(m.hand('L'), C.wood));
+    m.add('body', place(G.cyl, C.wood, m.P(0.06, 0.52, -0.13), [0.35, 0, -0.4], [0.038, 0.24, 0.038]));
+    for (let i = 0; i < 3; i++) m.add('body', place(G.box, 0xf6efe0, m.P(0.02 + i * 0.035, 0.67, -0.18), [0.35, 0, -0.4], [0.02, 0.06, 0.006]));
+    m.add('foreL', ...bowGeos(m.hand('L'), C.wood, 0.17));
     return { style: 'bow', scale: 1.25, launch: 'foreL' };
   },
   barbarian(def) {
-    const m = mascot(def, { bulk: 1.05 });
-    m.add('head', place(G.dome, C.blond, m.P(0, 0.84, 0), 0, [0.292, 0.255, 0.292]));
-    m.add('head', place(G.cyl, shade(C.blond, 0.85), m.P(0, 0.845, 0), 0, [0.296, 0.04, 0.296]));
+    const m = mascot(def, { bulk: 1.08, limb: 1.1, legs: C.hairBrown, feet: C.leatherDark, brow: C.goldDark });
+    const [hx, hy, hz] = m.cover(1.05);
+    m.add('head', place(G.dome, C.blond, m.P(0, m.headC[1] + 0.025, -0.004), 0, [hx, hy * 0.92, hz]));
+    m.add('head', place(G.cyl, shade(C.blond, 0.85), m.P(0, m.headC[1] + 0.03, -0.004), 0, [hx * 1.01, 0.022, hz * 1.01]));
     for (const sx of [1, -1]) {
-      m.add('head', place(G.box, C.blond, m.P(0.255 * sx, 0.75, 0.03), [0, 0, 0.12 * sx], [0.07, 0.18, 0.17]));
+      m.add('head', place(G.box, C.blond, m.P(0.152 * sx, 0.79, 0.0), [0, 0, 0.12 * sx], [0.042, 0.13, 0.12]));
       // Curled handlebar mustache.
-      m.add('head', place(capsule(0.024, 0.07), C.blond, m.P(0.055 * sx, 0.742, 0.262), [0, 0, 1.2 * sx]));
-      m.add('head', place(new THREE.TorusGeometry(1, 0.38, 6, 10, Math.PI * 1.4), C.blond, m.P(0.112 * sx, 0.752, 0.25), [0, 0, sx > 0 ? -0.4 : Math.PI + 0.4], 0.026));
+      m.add('head', place(capsule(0.014, 0.045), C.blond, m.P(0.034 * sx, 0.763, 0.165), [0, 0, 1.2 * sx]));
+      m.add('head', place(new THREE.TorusGeometry(1, 0.38, 6, 10, Math.PI * 1.4), C.blond, m.P(0.07 * sx, 0.77, 0.158), [0, 0, sx > 0 ? -0.4 : Math.PI + 0.4], 0.017));
     }
+    // Fur shoulder strap across the bare chest.
+    m.add('body', place(G.box, C.hairBrown, m.P(0.02, 0.52, 0.0), [0, 0, -0.75], [0.05, 0.36, 0.235]));
     belt(m);
-    m.add('foreR', ...swordGeos(m.hand('R'), 0.34, 0.06));
+    m.add('foreR', ...swordGeos(m.hand('R'), 0.26, 0.045));
     return { style: 'swing', scale: 1.3 };
   },
   bomber(def) {
-    const m = mascot(def, { noEyes: true, bulk: 1.08, feet: shade(C.skin, 0.92) });
-    m.add('head', place(G.hood, C.navy, m.headC, 0, [0.297, 0.292, 0.292]));
-    m.add('head', place(G.cyl, shade(C.navy, 0.8), m.P(0, 0.9, 0), 0, [0.288, 0.03, 0.288]));
+    const m = mascot(def, { noEyes: true, noBrows: true, bulk: 1.1, limb: 1.05, legs: C.navy, feet: C.leatherDark });
+    m.add('head', place(G.hood, C.navy, m.headC, 0, m.cover(1.09)));
+    m.add('head', place(G.cyl, shade(C.navy, 0.8), m.P(0, 0.9, 0), 0, [0.168, 0.02, 0.172]));
     for (const sx of [1, -1]) {
-      m.add('head', place(new THREE.TorusGeometry(1, 0.26, 8, 18), C.gold, m.P(0.088 * sx, 0.835, 0.25), 0, 0.075));
-      m.add('head', place(G.cyl, 0x2e3440, m.P(0.088 * sx, 0.835, 0.25), [Math.PI / 2, 0, 0], [0.068, 0.03, 0.068]));
-      m.add('head', place(G.sphere, 0x8fb3c9, m.P(0.07 * sx, 0.855, 0.268), 0, [0.02, 0.015, 0.006]));
-      m.add('head', place(G.sphere, C.navy, m.P(0.255 * sx, 0.72, 0.04), 0, [0.06, 0.1, 0.08]));
+      m.add('head', place(new THREE.TorusGeometry(1, 0.26, 8, 18), C.gold, m.P(0.058 * sx, 0.838, 0.155), [0, 0.3 * sx, 0], 0.048));
+      m.add('head', place(G.cyl, 0x2e3440, m.P(0.058 * sx, 0.838, 0.155), [Math.PI / 2, 0, 0.3 * sx], [0.043, 0.02, 0.043]));
+      m.add('head', place(G.sphere, 0x8fb3c9, m.P(0.048 * sx, 0.85, 0.168), 0, [0.013, 0.01, 0.004]));
+      m.add('head', place(G.sphere, C.navy, m.P(0.158 * sx, 0.77, 0.02), 0, [0.035, 0.06, 0.05]));
     }
-    m.add('body', place(G.box, C.leather, m.P(0.07, 0.43, 0.19), [0, 0, 0.55], [0.04, 0.4, 0.025]));
-    m.add('body', place(G.box, C.leather, m.P(-0.07, 0.43, 0.19), [0, 0, -0.55], [0.04, 0.4, 0.025]));
+    m.add('head', place(G.box, C.leatherDark, m.P(0, 0.85, 0.0), 0, [0.35, 0.02, 0.1]));
+    for (const sx of [1, -1]) m.add('body', place(G.box, C.leather, m.P(0.045 * sx, 0.52, 0.11), [0, 0, 0.55 * sx], [0.024, 0.26, 0.014]));
     belt(m, C.leatherDark, C.goldDark);
     const h = m.hand('R');
     const bomb = addPart(def, 'prop', 'foreR', h);
     bomb.geos.push(
-      place(G.sphere, 0x1d1d22, [h[0], h[1] - 0.03, h[2] + 0.12], 0, 0.14),
-      place(G.cylLo, 0x2a2a30, [h[0], h[1] + 0.11, h[2] + 0.12], 0, [0.04, 0.05, 0.04]),
-      place(G.cylLo, C.leather, [h[0], h[1] + 0.16, h[2] + 0.12], [0, 0, 0.3], [0.012, 0.07, 0.012]),
-      place(G.sphereLo, 0xffd35a, [h[0] - 0.02, h[1] + 0.2, h[2] + 0.12], 0, 0.028),
+      place(G.sphere, 0x1d1d22, [h[0], h[1] - 0.02, h[2] + 0.085], 0, 0.095),
+      place(G.cylLo, 0x2a2a30, [h[0], h[1] + 0.075, h[2] + 0.085], 0, [0.028, 0.035, 0.028]),
+      place(G.cylLo, C.leather, [h[0], h[1] + 0.11, h[2] + 0.085], [0, 0, 0.3], [0.008, 0.05, 0.008]),
+      place(G.sphereLo, 0xffd35a, [h[0] - 0.014, h[1] + 0.14, h[2] + 0.085], 0, 0.02),
     );
     return { style: 'throw', scale: 1.2, launch: 'foreR' };
   },
   cannon(def) {
     cannonParts(def);
-    mascot(def, { oz: -0.85, parent: 'carriage' });
-    return { style: 'cannon', scale: 1.15, launch: 'muzzle', base: { armL: [-0.9, 0, 0], armR: [-0.9, 0, 0], foreL: [-0.5, 0, 0], foreR: [-0.5, 0, 0] } };
+    mascot(def, { oz: -0.75, parent: 'carriage', torso: C.navy, legs: C.leatherDark, feet: C.leatherDark });
+    return { style: 'cannon', scale: 1.15, building: true, launch: 'muzzle', base: { armL: [-0.9, 0, 0], armR: [-0.9, 0, 0], foreL: [-0.5, 0, 0], foreR: [-0.5, 0, 0] } };
   },
   goblin(def) {
-    const m = mascot(def, { torso: C.green, belly: C.green });
+    const m = mascot(def, { torso: C.green, sleeve: C.green, forearm: C.skin, legs: C.hairBrown, feet: C.leatherDark, limb: 0.9 });
     for (const sx of [1, -1]) {
-      m.add('head', place(G.cone, C.goblinEar, m.P(0.34 * sx, 0.87, -0.02), [0, 0.25 * sx, -1.15 * sx], [0.075, 0.32, 0.03]));
-      m.add('head', place(G.cone, shade(C.goblinEar, 0.8), m.P(0.33 * sx, 0.868, -0.005), [0, 0.25 * sx, -1.15 * sx], [0.045, 0.24, 0.02]));
+      m.add('head', place(G.cone, C.goblinEar, m.P(0.21 * sx, 0.86, -0.01), [0, 0.25 * sx, -1.15 * sx], [0.048, 0.2, 0.02]));
+      m.add('head', place(G.cone, shade(C.goblinEar, 0.8), m.P(0.205 * sx, 0.859, 0.0), [0, 0.25 * sx, -1.15 * sx], [0.028, 0.15, 0.013]));
     }
     // Vest edges and an open collar.
-    for (const sx of [1, -1]) m.add('body', place(G.box, C.greenDark, m.P(0.045 * sx, 0.42, 0.2), [0, 0, -0.1 * sx], [0.03, 0.26, 0.02]));
-    m.add('body', place(G.box, C.skin, m.P(0, 0.48, 0.2), 0, [0.06, 0.12, 0.012]));
+    for (const sx of [1, -1]) m.add('body', place(G.box, C.greenDark, m.P(0.028 * sx, 0.5, 0.112), [0, 0, -0.1 * sx], [0.02, 0.2, 0.014]));
+    m.add('body', place(G.box, C.skin, m.P(0, 0.55, 0.11), 0, [0.035, 0.09, 0.008]));
     belt(m, C.leather, C.steelDark);
-    m.add('foreR', ...swordGeos(m.hand('R'), 0.22, 0.05));
+    m.add('foreR', ...swordGeos(m.hand('R'), 0.17, 0.04));
     return { style: 'stab', scale: 1.1 };
   },
   skeleton(def) {
-    const m = mascot(def, { skin: C.bone, limb: 0.5, fist: 0.8, torso: C.bone });
-    // Hollow the chunky torso into a ribcage, spine and pelvis.
+    const m = mascot(def, { skin: C.bone, limb: 0.5, fist: 0.8, torso: C.bone, legs: C.bone, dotEyes: true, noBrows: true, noNose: true });
+    // Replace the solid torso with a ribcage, spine, collarbones and pelvis.
     def.body.geos.length = 0;
     const rib = new THREE.TorusGeometry(1, 0.11, 5, 14, Math.PI * 1.5).rotateZ(Math.PI * 0.75).rotateX(-Math.PI / 2);
-    [[0.5, 0.75], [0.44, 0.9], [0.38, 0.92], [0.32, 0.8]].forEach(([y, f]) => m.add('body', place(rib, C.bone, m.P(0, y, 0), 0, [0.17 * f, 0.1, 0.14 * f])));
-    m.add('body', place(G.cyl, C.bone, m.P(0, 0.38, -0.05), 0, [0.03, 0.32, 0.03]));
-    m.add('body', place(G.sphere, C.bone, m.P(0, 0.25, 0), 0, [0.13, 0.06, 0.09]));
-    for (const [, sx] of [['L', 1], ['R', -1]]) m.add('body', place(G.sphere, C.bone, m.P(0.2 * sx, 0.52, 0), 0, 0.05));
-    m.add('foreR', ...swordGeos(m.hand('R'), 0.26, 0.05, { guard: C.goldDark, blade: 0xa7acb2 }));
+    [[0.58, 0.8], [0.54, 0.95], [0.5, 0.95], [0.46, 0.8]].forEach(([y, f]) => m.add('body', place(rib, C.bone, m.P(0, y, 0), 0, [0.11 * f, 0.062, 0.088 * f])));
+    m.add('body', place(G.cyl, C.bone, m.P(0, 0.5, -0.04), 0, [0.018, 0.3, 0.018]));
+    m.add('body', place(G.sphere, C.bone, m.P(0, 0.37, 0), 0, [0.085, 0.04, 0.06]));
+    m.add('body', place(G.cyl, C.bone, m.P(0, 0.64, 0), 0, [0.022, 0.08, 0.022]));
+    for (const sx of [1, -1]) m.add('body', place(capsule(0.012, 0.09), C.bone, m.P(0.07 * sx, 0.61, 0.02), [0, 0, Math.PI / 2 - 0.15 * sx]));
+    m.add('foreR', ...swordGeos(m.hand('R'), 0.2, 0.04, { guard: C.goldDark, blade: 0xa7acb2 }));
     return { style: 'swing', scale: 1.05 };
   },
   giant(def) {
     const vest = C.leather;
-    const m = mascot(def, { torso: vest, belly: vest, bulk: 1.2, limb: 1.35, fist: 1.5 });
-    m.add('body', place(G.box, shade(vest, 0.7), m.P(0, 0.42, 0.205), 0, [0.03, 0.28, 0.012]));
-    for (let i = 0; i < 3; i++) m.add('body', place(G.box, 0xd8b98a, m.P(0, 0.5 - i * 0.07, 0.215), 0, [0.08, 0.012, 0.01]));
-    m.add('body', place(G.cone, shade(vest, 1.15), m.P(0, 0.52, 0), 0, [0.31, 0.12, 0.27]));
-    belt(m, C.leatherDark, C.gold, 0.3, 1.2);
+    const m = mascot(def, { torso: vest, legs: C.leatherDark, feet: C.leatherDark, bulk: 1.25, limb: 1.4, fist: 1.5, brow: C.ginger });
+    const zf = 0.152 * m.b * TORSO_DEPTH;
+    m.add('body', place(G.box, shade(vest, 0.7), m.P(0, 0.52, zf - 0.004), 0, [0.02, 0.2, 0.01]));
+    for (let i = 0; i < 3; i++) m.add('body', place(G.box, 0xd8b98a, m.P(0, 0.57 - i * 0.05, zf), 0, [0.05, 0.008, 0.008]));
+    m.add('body', place(G.cone, shade(vest, 1.15), m.P(0, 0.6, 0), 0, [0.2 * m.b, 0.08, 0.16 * m.b]));
+    belt(m, C.leatherDark, C.gold);
     // Bald on top, ginger fringe around the back and thick brows.
-    m.add('head', place(G.fringe, C.ginger, m.headC, 0, [0.29, 0.282, 0.282]));
-    for (const sx of [1, -1]) m.add('head', place(capsule(0.03, 0.09), C.ginger, m.P(0.085 * sx, 0.9, 0.245), [0, 0, (Math.PI / 2) * sx + 0.25 * sx]));
+    m.add('head', place(G.fringe, C.ginger, m.headC, 0, m.cover(1.06)));
+    for (const sx of [1, -1]) m.add('head', place(capsule(0.017, 0.05), C.ginger, m.P(0.062 * sx, 0.885, 0.156), [0, 0.35 * sx, (Math.PI / 2) * sx + 0.25 * sx]));
     return { style: 'punch', scale: 1.95 };
   },
   wizard(def, team) {
     const robe = TEAM_CLOTH[team];
     const m = mascot(def, { torso: robe, sleeve: robe, legs: robe, feet: C.leatherDark });
-    m.add('head', place(G.hood, robe, m.headC, 0, [0.306, 0.3, 0.3]));
-    m.add('body', place(G.cone, robe, m.P(0, 0.26, 0), 0, [0.3, 0.52, 0.27]));
-    m.add('body', place(G.cone, TEAM_CLOTH_DARK[team], m.P(0, 0.5, -0.01), 0, [0.31, 0.24, 0.27]));
-    belt(m, C.leather, C.gold, 0.32);
+    m.add('head', place(G.hood, robe, m.headC, 0, m.cover(1.12)));
+    m.add('body', place(G.cone, robe, m.P(0, 0.265, 0), 0, [0.19, 0.44, 0.16]));
+    m.add('body', place(G.cone, TEAM_CLOTH_DARK[team], m.P(0, 0.585, -0.005), 0, [0.205, 0.17, 0.165]));
+    belt(m, C.leather, C.gold);
     const h = m.hand('R');
-    m.add('foreR', place(G.cylLo, C.wood, [h[0], h[1] + 0.2, h[2] + 0.04], 0, [0.025, 0.9, 0.025]));
-    m.add('foreR', place(G.cyl, C.leatherDark, [h[0], h[1] + 0.62, h[2] + 0.04], 0, [0.045, 0.07, 0.045]));
-    const torch = addPart(def, 'torch', 'foreR', [h[0], h[1] + 0.7, h[2] + 0.04]);
+    m.add('foreR', place(G.cylLo, C.wood, [h[0], h[1] + 0.13, h[2] + 0.025], 0, [0.016, 0.6, 0.016]));
+    m.add('foreR', place(G.cyl, C.leatherDark, [h[0], h[1] + 0.41, h[2] + 0.025], 0, [0.03, 0.05, 0.03]));
+    const torch = addPart(def, 'torch', 'foreR', [h[0], h[1] + 0.46, h[2] + 0.025]);
     torch.mat = flameMat;
-    torch.geos.push(place(G.cone, C.flame, [h[0], h[1] + 0.74, h[2] + 0.04], 0, [0.06, 0.16, 0.06]));
+    torch.geos.push(place(G.cone, C.flame, [h[0], h[1] + 0.49, h[2] + 0.025], 0, [0.04, 0.11, 0.04]));
     return { style: 'cast', scale: 1.35, launch: 'torch' };
   },
   'hog-rider'(def) {
@@ -649,12 +684,13 @@ const BUILDERS = {
       const leg = addPart(def, `pl${i}`, 'pig', [x, 0.32, z]);
       leg.geos.push(place(capsule(0.075, 0.12), C.pig, [x, 0.18, z]), place(G.cylLo, C.leatherDark, [x, 0.04, z], 0, [0.07, 0.07, 0.07]));
     });
-    const m = mascot(def, { oy: 0.58, oz: -0.08, parent: 'pig', legsParent: 'body' });
+    const m = mascot(def, { oy: 0.5, oz: -0.08, parent: 'pig', legsParent: 'body', bulk: 1.05, legs: C.leatherDark, feet: C.leatherDark });
+    belt(m);
     const h = m.hand('R');
     const dir = [0, -0.5, 0.866];
     const at = (k) => [h[0], h[1] + dir[1] * k, h[2] + dir[2] * k];
-    m.add('foreR', place(G.cylLo, C.wood, at(0.18), [0.52 + Math.PI / 2, 0, 0], [0.03, 0.46, 0.03]));
-    m.add('foreR', place(G.box, 0x6b5a48, at(0.42), [0.52, 0, 0], [0.26, 0.16, 0.16]));
+    m.add('foreR', place(G.cylLo, C.wood, at(0.12), [0.52 + Math.PI / 2, 0, 0], [0.02, 0.32, 0.02]));
+    m.add('foreR', place(G.box, 0x6b5a48, at(0.29), [0.52, 0, 0], [0.18, 0.11, 0.11]));
     return {
       style: 'hammer',
       scale: 1.15,
@@ -663,8 +699,9 @@ const BUILDERS = {
     };
   },
   pekka(def) {
-    const m = mascot(def, { bulk: 1.05 });
-    m.add('foreR', ...swordGeos(m.hand('R'), 0.85, 0.09, { tilt: -0.95 }));
+    const m = mascot(def, { bulk: 1.1, limb: 1.15, fist: 1.15 });
+    belt(m, C.leatherDark, C.gold);
+    m.add('foreR', ...swordGeos(m.hand('R'), 0.6, 0.07, { tilt: -0.95 }));
     return { style: 'heavy', scale: 1.8 };
   },
 };
@@ -685,21 +722,234 @@ function template(id, team) {
 const AIR_LIFT = 1.6;
 
 /** Model height of the mascot rig before scaling (top of the head). */
-const RIG_HEIGHT = 1.08;
-/** Units read small under the steep battle camera, so all of them get this boost. */
-const UNIT_SIZE = 1.25;
+const RIG_HEIGHT = 1.01;
+/** Extra height of a mounted rider's head over a standing unit's. */
+const MOUNT_LIFT = 0.5;
+/** World scale of troops (per-card `scale` on top), and of buildings, which fill their footprint. */
+const UNIT_SIZE = 0.625;
+const BUILDING_SIZE = 1.25;
+
+/** Half-extent of a geometry's ground footprint (model units). */
+function footprintOf(geo) {
+  if (!geo.boundingBox) geo.computeBoundingBox();
+  const b = geo.boundingBox;
+  return Math.max(-b.min.x, b.max.x, -b.min.z, b.max.z);
+}
 
 export function buildUnit(cardId, team) {
   const t = template(cardId, team);
-  const rig = instantiate(t, { skin: true });
-  const scale = t.scale * UNIT_SIZE;
+  const sculpt = unitModels[cardId];
+  const rig = sculpt ? instantiateSculpt(sculpt) : instantiate(t, { skin: true });
+  const scale = t.scale * (t.building ? BUILDING_SIZE : UNIT_SIZE);
   rig.root.scale.setScalar(scale);
-  const height = (t.mount ? RIG_HEIGHT + 0.45 : RIG_HEIGHT) * scale + (t.air ? AIR_LIFT : 0);
-  return { ...rig, style: t.style, scale, height, launch: t.launch ? rig.groups[t.launch] : null, base: t.base ?? {}, mount: !!t.mount, air: !!t.air };
+  const height = (t.mount ? RIG_HEIGHT + MOUNT_LIFT : RIG_HEIGHT) * scale + (t.air ? AIR_LIFT : 0);
+  t.footprint ??= footprintOf(sculpt?.geo ?? skinGeometry(t) ?? t.parts.find((p) => p.geo).geo);
+  return {
+    ...rig,
+    style: t.style,
+    scale,
+    height,
+    footprint: (sculpt ? sculpt.footprint : t.footprint) * scale,
+    launch: t.launch ? rig.groups[t.launch] : null,
+    base: sculpt ? {} : t.base ?? {},
+    mount: !!t.mount,
+    air: !!t.air,
+  };
 }
 
-/** Treasure chest with a hinged lid (`groups.lid`), one design per rarity (see chests.js). */
-export { makeChest as buildChest } from './chests.js';
+// ------------------------------------------------------------------ sculpted units
+
+/**
+ * Sculpted units that replace the procedural ones once loaded, auto-rigged on load with
+ * bones named like the procedural rig so the same Animator drives them. Joints are measured
+ * on the sculpt in its own units (facing +Z): `at` is the pivot, `seg` the bone's extent for
+ * skinning (defaults to `at` → `tip`), `r` its thickness. `center` [x, z] and `top` (head
+ * height) normalise the sculpt into rig units. `grips` force held weapons onto one bone.
+ * `mirror` flips the sculpt in X (puts the Hog Rider's hammer in his right hand).
+ */
+const UNIT_MODELS = {
+  pekka: {
+    url: '/assets/models/pekka.glb',
+    center: [0.12, -0.05],
+    top: 1.55,
+    height: RIG_HEIGHT,
+    bones: {
+      body: { parent: 'root', at: [0.12, 0.25, -0.05], tip: [0.09, 0.8, -0.03], r: 0.3 },
+      head: { parent: 'body', at: [0.04, 0.84, -0.02], tip: [-0.03, 1.4, -0.02], r: 0.34 },
+      armL: { parent: 'body', at: [0.4, 0.72, -0.04], tip: [0.5, 0.56, -0.03], r: 0.1 },
+      foreL: { parent: 'armL', at: [0.5, 0.56, -0.03], tip: [0.53, 0.36, 0], r: 0.1 },
+      armR: { parent: 'body', at: [-0.18, 0.72, 0], tip: [-0.3, 0.66, 0.06], r: 0.1 },
+      foreR: { parent: 'armR', at: [-0.3, 0.66, 0.06], tip: [-0.38, 0.6, 0.1], r: 0.1 },
+      legL: { parent: 'root', at: [0.32, 0.26, -0.02], tip: [0.32, 0.12, 0], r: 0.13 },
+      shinL: { parent: 'legL', at: [0.32, 0.12, 0], tip: [0.32, 0.0, 0.02], r: 0.13 },
+      legR: { parent: 'root', at: [-0.09, 0.26, -0.02], tip: [-0.1, 0.12, 0], r: 0.13 },
+      shinR: { parent: 'legR', at: [-0.1, 0.12, 0], tip: [-0.1, 0.0, 0.02], r: 0.13 },
+    },
+    grips: [{ bone: 'foreR', min: [-0.7, 0.74, -0.25], max: [-0.355, 1.8, 0.4] }],
+  },
+  'hog-rider': {
+    url: '/assets/models/hog-rider.glb',
+    center: [-0.01, 0],
+    top: 1.35,
+    height: RIG_HEIGHT + MOUNT_LIFT,
+    mirror: true,
+    bones: {
+      pig: { parent: 'root', at: [-0.01, 0.4, -0.05], seg: [[-0.01, 0.4, -0.55], [-0.01, 0.42, 0.55]], r: 0.3 },
+      pl0: { parent: 'pig', at: [0.2, 0.16, 0.25], tip: [0.2, 0.0, 0.27], r: 0.07 },
+      pl1: { parent: 'pig', at: [-0.2, 0.16, 0.25], tip: [-0.2, 0.0, 0.27], r: 0.07 },
+      pl2: { parent: 'pig', at: [0.19, 0.16, -0.45], tip: [0.19, 0.0, -0.45], r: 0.07 },
+      pl3: { parent: 'pig', at: [-0.17, 0.16, -0.45], tip: [-0.17, 0.0, -0.45], r: 0.07 },
+      body: { parent: 'pig', at: [-0.03, 0.64, -0.1], tip: [-0.03, 0.86, -0.1], r: 0.2 },
+      head: { parent: 'body', at: [-0.01, 0.88, -0.11], tip: [-0.01, 1.3, -0.11], r: 0.27 },
+      armR: { parent: 'body', at: [0.22, 0.8, -0.05], tip: [0.27, 0.84, 0.1], r: 0.07 },
+      foreR: { parent: 'armR', at: [0.27, 0.84, 0.1], tip: [0.3, 0.9, 0.22], r: 0.07 },
+      armL: { parent: 'body', at: [-0.27, 0.8, -0.1], tip: [-0.31, 0.7, 0.0], r: 0.07 },
+      foreL: { parent: 'armL', at: [-0.31, 0.7, 0.0], tip: [-0.3, 0.66, 0.08], r: 0.07 },
+    },
+    grips: [{ bone: 'foreR', min: [0.22, 0.95, 0.09], max: [0.6, 1.5, 0.45] }],
+  },
+};
+/** Per card: { geo (skinned, rig units), mat, tints, bones: [{ name, parent, offset }], footprint }. */
+const unitModels = {};
+
+/** Copies any quantized attribute to float32: skinning quantized vertex data breaks under WebGPU. */
+function toFloat(geometry) {
+  for (const [name, a] of Object.entries(geometry.attributes)) {
+    if (a.array instanceof Float32Array && !a.isInterleavedBufferAttribute) continue;
+    const out = new Float32Array(a.count * a.itemSize);
+    for (let i = 0; i < a.count; i++) for (let c = 0; c < a.itemSize; c++) out[i * a.itemSize + c] = a.getComponent(i, c);
+    geometry.setAttribute(name, new THREE.BufferAttribute(out, a.itemSize));
+  }
+}
+
+/**
+ * Skin weights from bone proximity: each vertex goes to the bone whose segment is nearest
+ * relative to its thickness, sharing weight with the parent or a child bone near the joint
+ * so limbs bend smoothly. Vertices inside a grip box stay rigidly on the grip's bone.
+ */
+function autoSkin(geometry, bones, grips) {
+  const pos = geometry.attributes.position;
+  const n = pos.count;
+  const si = new Uint16Array(n * 4);
+  const sw = new Float32Array(n * 4);
+  const v = new THREE.Vector3();
+  const q = new THREE.Vector3();
+  const line = new THREE.Line3();
+  const score = new Float32Array(bones.length);
+  const index = new Map(bones.map((b, i) => [b.name, i]));
+  const related = bones.map((b) => bones.map((c, j) => (c.parent === b.name || b.parent === c.name ? j : -1)).filter((j) => j >= 0));
+  const boxes = grips.map((g) => ({ box: new THREE.Box3(new THREE.Vector3(...g.min), new THREE.Vector3(...g.max)), bone: index.get(g.bone) }));
+  const BLEND = 0.45;
+  for (let i = 0; i < n; i++) {
+    v.fromBufferAttribute(pos, i);
+    const grip = boxes.find((g) => g.box.containsPoint(v));
+    if (grip) {
+      si[i * 4] = grip.bone + 1;
+      sw[i * 4] = 1;
+      continue;
+    }
+    let best = 0;
+    for (let j = 0; j < bones.length; j++) {
+      line.set(bones[j].seg[0], bones[j].seg[1]).closestPointToPoint(v, true, q);
+      score[j] = q.distanceTo(v) / bones[j].r;
+      if (score[j] < score[best]) best = j;
+    }
+    let second = -1;
+    for (const j of related[best]) if (second < 0 || score[j] < score[second]) second = j;
+    const gap = second < 0 ? Infinity : score[second] - score[best];
+    const share = gap < BLEND ? 0.5 * (1 - gap / BLEND) ** 2 : 0;
+    si[i * 4] = best + 1;
+    sw[i * 4] = 1 - share;
+    if (share > 0) {
+      si[i * 4 + 1] = second + 1;
+      sw[i * 4 + 1] = share;
+    }
+  }
+  geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
+  geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
+}
+
+/** Loads and auto-rigs the sculpted units (procedural models stay as the fallback). */
+async function loadUnitModels() {
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+  const loader = new GLTFLoader();
+  await Promise.all(
+    Object.entries(UNIT_MODELS).map(async ([id, def]) => {
+      const gltf = await loader.loadAsync(def.url);
+      gltf.scene.updateMatrixWorld(true);
+      let src = null;
+      gltf.scene.traverse((o) => o.isMesh && (src ??= o));
+      const geo = src.geometry.clone();
+      toFloat(geo);
+      geo.applyMatrix4(src.matrixWorld);
+      // Sculpt units → rig units: centred on the body, feet on the ground, head at `height`.
+      const k = def.height / def.top;
+      const sx = def.mirror ? -1 : 1;
+      const norm = (p) => new THREE.Vector3(sx * (p[0] - def.center[0]) * k, p[1] * k, (p[2] - def.center[1]) * k);
+      const toRig = new THREE.Matrix4().makeScale(sx * k, k, k).multiply(new THREE.Matrix4().makeTranslation(-def.center[0], 0, -def.center[1]));
+      geo.applyMatrix4(toRig);
+      if (def.mirror) {
+        // Mirroring turns triangles inside out: restore their winding.
+        const idx = geo.index.array;
+        for (let i = 0; i < idx.length; i += 3) [idx[i + 1], idx[i + 2]] = [idx[i + 2], idx[i + 1]];
+      }
+      // Bones are named for the side they end up on (after any mirroring): L at +X.
+      const at = {};
+      const bones = Object.entries(def.bones).map(([name, b]) => {
+        at[name] = norm(b.at);
+        return { name, parent: b.parent, seg: (b.seg ?? [b.at, b.tip]).map(norm), r: b.r * k };
+      });
+      const grips = def.grips.map((g) => {
+        const a = norm(g.min);
+        const c = norm(g.max);
+        return { bone: g.bone, min: [Math.min(a.x, c.x), a.y, Math.min(a.z, c.z)], max: [Math.max(a.x, c.x), c.y, Math.max(a.z, c.z)] };
+      });
+      autoSkin(geo, bones, grips);
+      geo.setAttribute('rest', geo.attributes.position.clone());
+      geo.computeBoundingSphere();
+      geo.boundingSphere.radius *= 1.4;
+      const map = src.material.map;
+      if (map) map.anisotropy = 8;
+      const mat = makeSculptMaterial(src.material);
+      const tints = Object.fromEntries(Object.entries(TINTS).map(([mode, glow]) => [mode, makeSculptMaterial(src.material, glow)]));
+      unitModels[id] = {
+        geo,
+        mat,
+        tints,
+        footprint: footprintOf(geo) * 0.8,
+        bones: bones.map((b) => {
+          const pp = b.parent === 'root' ? new THREE.Vector3() : at[b.parent];
+          return { name: b.name, parent: b.parent, offset: at[b.name].clone().sub(pp) };
+        }),
+      };
+    }),
+  );
+}
+
+/** One SkinnedMesh on the sculpt's bones; `groups` holds the bones by joint name for the Animator. */
+function instantiateSculpt(s) {
+  const root = new THREE.Group();
+  root.rotation.order = 'YXZ';
+  const rootBone = new THREE.Bone();
+  const groups = { root };
+  const bones = [rootBone];
+  for (const b of s.bones) {
+    const bone = new THREE.Bone();
+    bone.position.copy(b.offset);
+    (b.parent === 'root' ? rootBone : groups[b.parent]).add(bone);
+    groups[b.name] = bone;
+    bones.push(bone);
+  }
+  const mesh = new THREE.SkinnedMesh(s.geo, s.mat);
+  mesh.castShadow = true;
+  mesh.userData.baseMat = s.mat;
+  mesh.userData.tints = s.tints;
+  mesh.add(rootBone);
+  root.add(mesh);
+  root.updateMatrixWorld(true);
+  mesh.bind(new THREE.Skeleton(bones));
+  return { root, groups, meshes: [mesh] };
+}
 
 /** Renders a model as a translucent placement ghost. */
 export function ghostify(model, mat) {
@@ -814,24 +1064,21 @@ function towerTemplate(kind, team) {
     const cloth = TEAM_CLOTH[team];
     if (king) {
       const m = mascot(crew, { ox: -0.5, oz: -0.12, torso: cloth, sleeve: cloth, legs: TEAM_CLOTH_DARK[team], feet: C.leatherDark, bulk: 1.08 });
-      m.add('head', ...crownGeos(m.P, 1.04, 0.17));
-      for (const sx of [1, -1]) {
-        m.add('head', place(capsule(0.032, 0.1), 0x1b1b1f, m.P(0.07 * sx, 0.748, 0.25), [0, 0, 1.25 * sx]));
-        m.add('head', place(G.box, 0x1b1b1f, m.P(0.08 * sx, 0.9, 0.245), [0, 0, -0.2 * sx], [0.08, 0.025, 0.02]));
-      }
-      m.add('body', place(G.banner, cloth, m.P(0, 0.44, -0.2), [0, Math.PI, 0], [0.48, 0.65, 0.035]));
-      m.add('body', place(G.sphere, 0xf4efe6, m.P(0, 0.56, -0.01), 0, [0.27, 0.06, 0.23]));
-      m.add('body', place(G.box, C.gold, m.P(0, 0.42, 0.205), 0, [0.04, 0.24, 0.012]));
-      belt(m, C.gold, C.goldDark, 0.3, 1.08);
+      m.add('head', ...crownGeos(m.P, m.headTop - 0.01, 0.12));
+      for (const sx of [1, -1]) m.add('head', place(capsule(0.018, 0.06), 0x1b1b1f, m.P(0.04 * sx, 0.762, 0.163), [0, 0, 1.25 * sx]));
+      m.add('body', place(G.banner, cloth, m.P(0, 0.47, -0.13), [0, Math.PI, 0], [0.3, 0.42, 0.025]));
+      m.add('body', place(G.sphere, 0xf4efe6, m.P(0, 0.61, -0.005), 0, [0.17, 0.04, 0.14]));
+      m.add('body', place(G.box, C.gold, m.P(0, 0.52, 0.12), 0, [0.025, 0.16, 0.01]));
+      belt(m, C.gold, C.goldDark);
       cannonParts(crew, { ox: 0.28, oz: 0.2, scale: 1.02, ornate: true });
     } else {
-      const m = mascot(crew, { torso: cloth, sleeve: cloth, legs: TEAM_CLOTH_DARK[team], feet: C.leatherDark });
+      const m = mascot(crew, { torso: cloth, sleeve: cloth, legs: TEAM_CLOTH_DARK[team], feet: C.leatherDark, brow: C.hair });
       // Pink bob: cap, fringe of bangs and side locks.
-      m.add('head', place(G.hair, C.hair, m.P(0, 0.82, -0.01), 0, [0.3, 0.3, 0.3]));
-      m.add('head', place(G.box, C.hair, m.P(0, 0.95, 0.2), [0.4, 0, 0], [0.46, 0.1, 0.12]));
-      for (const sx of [1, -1]) m.add('head', place(G.box, C.hair, m.P(0.255 * sx, 0.72, 0.06), 0, [0.08, 0.3, 0.26]));
+      m.add('head', place(G.hair, C.hair, m.P(0, 0.845, -0.006), 0, m.cover(1.1)));
+      m.add('head', place(G.box, C.hair, m.P(0, 0.935, 0.12), [0.4, 0, 0], [0.28, 0.06, 0.07]));
+      for (const sx of [1, -1]) m.add('head', place(G.box, C.hair, m.P(0.155 * sx, 0.77, 0.03), 0, [0.05, 0.19, 0.16]));
       belt(m);
-      m.add('foreL', ...bowGeos(m.hand('L'), C.wood));
+      m.add('foreL', ...bowGeos(m.hand('L'), C.wood, 0.17));
     }
     for (const p of Object.values(crew)) {
       p.pivot = p.pivot.map((v) => v * crewScale);
@@ -973,8 +1220,9 @@ const CREW_RIGS = {
   archer: { waist: 0.48, neck: 0.6, blend: 0.035, armZ: [0.09, 0.15], shoulder: 0.56, fixedBase: true, maxYaw: 0.55, yaw: [0, 0, 0.75], armYaw: 0.9, look: 0.25, headAtCentre: true },
 };
 
-/** Loads the sculpted towers (called during boot; procedural towers are the fallback). */
+/** Loads the sculpted towers and units (called during boot; procedural models are the fallback). */
 export async function loadTowerModels() {
+  const units = loadUnitModels().catch((e) => console.warn('unit models', e));
   const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
   const loader = new GLTFLoader();
   await Promise.all(
@@ -1039,6 +1287,7 @@ export async function loadTowerModels() {
       towerModels[kind] = { teams: [holder, red], top: size.y * scale, half: wallHalfWidth(src, size.y), crew: crew.height ? crew : null };
     }),
   );
+  await units;
 }
 
 /** Swaps the sculpt's static king for a SkinnedMesh on three bones (feet, waist, neck) in its pivot. */
@@ -1220,6 +1469,7 @@ export class Animator {
     this.hit = 0;
     this.barrelZ = this.g.barrel?.position.z ?? 0;
     this.bodyY = this.g.body?.position.y ?? 0;
+    this.pigY = this.g.pig?.position.y ?? 0;
     this.rootY = this.g.root.position.y + (model.air ? AIR_LIFT : 0);
   }
 
@@ -1259,7 +1509,7 @@ export class Animator {
       const gallop = this.phase * 1.25;
       ['pl0', 'pl1', 'pl2', 'pl3'].forEach((n, i) => add(n, 'x', Math.sin(gallop + (i < 2 ? 0 : 2.2) + (i % 2) * 0.5) * 0.9 * w));
       add('pig', 'x', Math.sin(gallop) * 0.08 * w);
-      if (g.pig) g.pig.position.y = 0.42 + Math.abs(Math.sin(gallop)) * 0.08 * w;
+      if (g.pig) g.pig.position.y = this.pigY + Math.abs(Math.sin(gallop)) * 0.08 * w;
       if (g.body) g.body.position.y = this.bodyY + Math.abs(Math.cos(gallop)) * 0.06 * w;
       add('armL', 'x', -0.6);
     } else {

@@ -201,17 +201,19 @@ export class BattleView {
     const card = CARD_BY_ID[e.card];
     const model = buildUnit(card.id, e.team);
     const obj = new THREE.Group();
+    // Shadow disc and team ring hug the model's feet (never wider than its collision radius).
+    const foot = Math.min(card.radius, Math.max(0.28, model.footprint ?? card.radius));
     const blob = new THREE.Mesh(this.geo.disc, this.mat.blob);
-    blob.scale.setScalar(card.radius * 1.15);
+    blob.scale.setScalar(foot * 1.15);
     blob.position.y = 0.035;
     const ring = new THREE.Mesh(this.geo.ring, this.mat.ring[e.team]);
-    ring.scale.setScalar(card.radius * 1.25);
+    ring.scale.setScalar(foot * 1.25);
     ring.position.y = 0.045;
     const bar = this.makeBar(Math.max(0.9, card.radius * 2.2), model.height + 0.35, e.team);
     bar.visible = false;
     model.root.rotation.y = facing;
     obj.add(blob, ring, model.root, bar);
-    const blobSize = card.radius * 1.15;
+    const blobSize = foot * 1.15;
     obj.position.copy(tileToWorld(e.x, e.y));
     this.group.add(obj);
     return {
@@ -247,7 +249,7 @@ export class BattleView {
     if (v.tint === mode) return;
     v.tint = mode;
     const mat = mode === 'flash' ? flashMat : mode === 'frozen' ? frozenMat : mode === 'rage' ? rageMat : null;
-    for (const m of v.meshes) m.material = mat ?? m.userData.baseMat;
+    for (const m of v.meshes) m.material = mat ? (m.userData.tints?.[mode] ?? mat) : m.userData.baseMat;
   }
 
   /** Turns toward the current target while fighting, otherwise along the direction of travel. */
