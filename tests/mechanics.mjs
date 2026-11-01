@@ -107,6 +107,24 @@ const cast = (sim, cardId, x, y) => {
   const t = sim.entities.find((e) => e.kind === 'tower' && e.team === 1 && e.x < 9);
   check('giant can target towers', sim.isValidTarget(g, t));
 }
+// Pathing: a Giant dropped behind its own King Tower walks round it instead of pushing into it.
+for (const [gx, cx] of [[9, 9], [8.4, 9.6], [10, 9]]) {
+  const sim = fresh();
+  const king = sim.entities.find((e) => e.kind === 'tower' && e.team === 0 && e.towerKind === 'king');
+  const cannon = unit(sim, 'cannon', 1, cx, 7.5);
+  cannon.damage = 0;
+  cannon.lifetime = Infinity;
+  const g = unit(sim, 'giant', 0, gx, 0.8);
+  let closest = Infinity;
+  let hitAt = null;
+  for (let t = 0; t < 15 && hitAt === null; t += 1 / 30) {
+    sim.step(1 / 30);
+    closest = Math.min(closest, Math.hypot(g.x - king.x, g.y - king.y));
+    if (cannon.hp < cannon.maxHp) hitAt = t;
+  }
+  check(`giant behind the king tower (x ${gx}) walks round it to its target`, g.target === cannon && hitAt !== null && hitAt < 10, hitAt === null ? `stuck at ${g.x.toFixed(2)},${g.y.toFixed(2)}` : `hit after ${hitAt.toFixed(1)}s`);
+  check(`giant never sinks into the king tower (x ${gx})`, closest >= king.radius * 0.9 + g.radius * 0.6 - 0.02, `closest ${closest.toFixed(2)}`);
+}
 // Deploy zones: own half only, and not inside a tower.
 {
   const sim = fresh();

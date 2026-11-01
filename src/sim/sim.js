@@ -25,7 +25,12 @@ const SPELL_BLAST_J = 18;
 /** Momentum carried per point of damage, relative to a melee blow (arrows are light, bombs heavy). */
 const KNOCK_SCALE = { arrow: 0.3, bolt: 0.4, bullet: 0.5, fireball: 1, bomb: 1.3, cannonball: 1.1 };
 
+/** Extra clearance a troop keeps when walking round a tower or building that isn't its target. */
+const AVOID_MARGIN = 0.3;
+
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+/** Closest a ground troop's centre may get to a tower or building's centre. */
+const solidGap = (s, a) => s.radius * 0.9 + a.radius * 0.6;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 /** Small fast seeded PRNG so a match is reproducible from its seed (replays, server parity). */
@@ -326,6 +331,8 @@ export class BattleSim {
       wvx: 0,
       wvy: 0,
       stagger: 0,
+      detour: 0,
+      detourSide: 0,
     });
   }
 
@@ -583,9 +590,55 @@ export class BattleSim {
         gy = RIVER_Y + (targetSide === 0 ? -(RIVER_HALF + 0.7) : RIVER_HALF + 0.7);
       }
     }
+    [gx, gy] = this.steerAround(e, gx, gy, target);
     [e.wvx, e.wvy] = seek(e, gx, gy, speed);
     e.moving = true;
     if (Math.abs(gx - e.x) > 0.05) e.facingLeft = gx < e.x;
+  }
+
+  /**
+   * If a tower or building other than the target sits on the straight line to (gx, gy),
+   * returns a waypoint beside it so the troop walks round instead of pressing into it.
+   * The chosen side sticks until the obstacle is cleared so the troop doesn't dither.
+   */
+  steerAround(e, gx, gy, target) {
+    const dx = gx - e.x;
+    const dy = gy - e.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-3) return [gx, gy];
+    const ux = dx / len;
+    const uy = dy / len;
+    let block = null;
+    let blockT = Infinity;
+    let blockOff = 0;
+    for (const s of this.entities) {
+      if (s.dead || s === target || (s.kind !== 'tower' && s.kind !== 'building')) continue;
+      const rx = s.x - e.x;
+      const ry = s.y - e.y;
+      const t = rx * ux + ry * uy;
+      const off = ry * ux - rx * uy;
+      if (t <= 0 || t >= len || Math.abs(off) >= solidGap(s, e) + AVOID_MARGIN || t >= blockT) continue;
+      block = s;
+      blockT = t;
+      blockOff = off;
+    }
+    if (!block) {
+      e.detour = 0;
+      return [gx, gy];
+    }
+    const R = (solidGap(block, e) + AVOID_MARGIN) * 1.1;
+    const fits = (side) => {
+      const wx = block.x - uy * side * R;
+      return wx > 0.6 && wx < ARENA_W - 0.6;
+    };
+    let side = e.detour === block.id ? e.detourSide : 0;
+    if (!side) {
+      side = blockOff > 0.05 ? -1 : blockOff < -0.05 ? 1 : -uy * (ARENA_W / 2 - block.x) > 0 ? 1 : -1;
+      if (!fits(side) && fits(-side)) side = -side;
+      e.detour = block.id;
+      e.detourSide = side;
+    }
+    return [block.x - uy * side * R, block.y + ux * side * R];
   }
 
   /** F = m·a for every ground troop, then integrate positions. Frozen troops are held still. */
@@ -739,7 +792,7 @@ export class BattleSim {
         const dx = a.x - s.x;
         const dy = a.y - s.y;
         const d = Math.hypot(dx, dy) || 0.001;
-        const min = s.radius * 0.8 + a.radius * 0.5;
+        const min = solidGap(s, a);
         if (d < min) {
           a.x = s.x + (dx / d) * min;
           a.y = s.y + (dy / d) * min;
