@@ -693,7 +693,7 @@ const BUILDERS = {
     m.add('foreR', place(G.box, 0x6b5a48, at(0.29), [0.52, 0, 0], [0.18, 0.11, 0.11]));
     return {
       style: 'hammer',
-      scale: 1.15,
+      scale: 0.95,
       base: { legL: [-0.6, 0, 0.9], legR: [-0.6, 0, -0.9], shinL: [1.1, 0, 0], shinR: [1.1, 0, 0], armL: [-0.5, 0, 0] },
       mount: true,
     };
@@ -726,7 +726,7 @@ const RIG_HEIGHT = 1.01;
 /** Extra height of a mounted rider's head over a standing unit's. */
 const MOUNT_LIFT = 0.5;
 /** World scale of troops (per-card `scale` on top), and of buildings, which fill their footprint. */
-const UNIT_SIZE = 0.625;
+const UNIT_SIZE = 1.0;
 const BUILDING_SIZE = 1.25;
 
 /** Half-extent of a geometry's ground footprint (model units). */
