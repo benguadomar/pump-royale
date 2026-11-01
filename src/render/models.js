@@ -961,7 +961,6 @@ export async function loadTowerModels() {
         o.material = o.material.clone();
         o.material.map = recolorForRed(o.material.map);
       });
-      for (const team of [holder, red]) team.traverse((o) => o.isMesh && (o.userData.baseMat = o.material));
       towerModels[kind] = { teams: [holder, red], top: size.y * scale, half: wallHalfWidth(src, size.y) };
     }),
   );
@@ -976,6 +975,8 @@ export function makeTowerObject(kind, team) {
     const body = tower.groups.tower;
     body.clear();
     const model = sculpt.teams[team].clone(true);
+    // clone() copies userData through JSON, which would turn the material reference into a plain object.
+    model.traverse((o) => o.isMesh && (o.userData.baseMat = o.material));
     if (team === 0) model.rotation.y = Math.PI;
     body.add(model);
   }
