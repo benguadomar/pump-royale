@@ -698,34 +698,8 @@ export function buildUnit(cardId, team) {
   return { ...rig, style: t.style, scale, height, launch: t.launch ? rig.groups[t.launch] : null, base: t.base ?? {}, mount: !!t.mount, air: !!t.air };
 }
 
-const CHEST_LOOK = {
-  wooden: { body: C.wood, band: C.iron, lock: C.ironLight },
-  silver: { body: C.steel, band: C.steelDark, lock: C.ironLight },
-  gold: { body: C.gold, band: C.goldDark, lock: C.iron },
-  magical: { body: 0x7a3fd0, band: C.gold, lock: C.goldDark },
-};
-
-/** Treasure chest with a hinged lid (`groups.lid`), in the colours of its rarity. */
-export function buildChest(type) {
-  const look = CHEST_LOOK[type] ?? CHEST_LOOK.wooden;
-  const def = {};
-  const base = addPart(def, 'body', 'root', [0, 0, 0]);
-  base.geos.push(place(G.box, look.body, [0, 0.36, 0], 0, [1.3, 0.72, 0.86]));
-  for (const x of [-0.5, 0, 0.5]) base.geos.push(place(G.box, look.band, [x, 0.36, 0], 0, [0.1, 0.74, 0.9]));
-  base.geos.push(place(G.box, look.lock, [0, 0.55, 0.45], 0, [0.22, 0.26, 0.06]));
-  const lid = addPart(def, 'lid', 'body', [0, 0.72, -0.43]);
-  const arch = new THREE.CylinderGeometry(0.43, 0.43, 1.3, 16, 1, false, 0, Math.PI).rotateZ(Math.PI / 2);
-  lid.geos.push(place(arch, look.body, [0, 0.72, 0]));
-  lid.geos.push(place(G.box, look.band, [0, 0.73, 0], 0, [1.3, 0.04, 0.86]));
-  base.geos.push(place(G.box, C.gold, [0, 0.66, 0], 0, [1.2, 0.08, 0.76]));
-  for (const x of [-0.5, 0, 0.5]) lid.geos.push(place(new THREE.CylinderGeometry(0.45, 0.45, 0.1, 16, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), look.band, [x, 0.72, 0]));
-  if (type === 'magical') {
-    const gem = addPart(def, 'gem', 'lid', [0, 1.2, 0]);
-    gem.mat = visorMat;
-    gem.geos.push(place(new THREE.OctahedronGeometry(0.16, 0), 0xff8af5, [0, 1.2, 0]));
-  }
-  return instantiate({ parts: compile(def) });
-}
+/** Treasure chest with a hinged lid (`groups.lid`), one design per rarity (see chests.js). */
+export { makeChest as buildChest } from './chests.js';
 
 /** Renders a model as a translucent placement ghost. */
 export function ghostify(model, mat) {

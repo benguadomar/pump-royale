@@ -5,6 +5,7 @@ import { sfx } from '../audio.js';
 import { net } from '../net.js';
 import { CARD_BY_ID, cardImg } from '../data/cards.js';
 import { ARENA_BY_ID } from '../data/arenas.js';
+import { CHEST_ICONS, renderChestIcons } from '../render/chests.js';
 import {
   CHESTS, gemsToOpen, leagueFor, kingLevel, XP_LEVELS, TROPHY_ROAD, PASS_TIERS, PASS_XP_PER_TIER, passReward, passTier,
 } from '../data/economy.js';
@@ -76,6 +77,12 @@ export function resourceBar() {
 
 // ------------------------------------------------------------------ chests
 
+/** The rendered 3D chest replaces the CSS-drawn icon once it is ready. */
+const chestIconStyle = (type) => {
+  const src = CHEST_ICONS.get(type);
+  return src ? { background: `url(${src}) center / contain no-repeat`, border: 'none', boxShadow: 'none', width: '58px', height: '50px', margin: '-6px 0 -2px' } : undefined;
+};
+
 export function chestSlots(engine) {
   const el = h('div', { class: 'chest-slots' });
   const build = (p) => {
@@ -89,7 +96,7 @@ export function chestSlots(engine) {
       return h(
         'button',
         { class: `chest-slot chest-${c.type}${ready ? ' ready' : ''}${left > 0 ? ' unlocking' : ''}`, onclick: () => (sfx.click(), onChest(engine, slot)) },
-        h('div', { class: 'chest-icon' }),
+        h('div', { class: 'chest-icon', style: chestIconStyle(c.type) }),
         h('b', {}, CHEST_LABEL[c.type]),
         h('span', {}, status),
         left > 0 && h('small', { class: 'gem-cost' }, h('span', { class: 'gem' }), gemsToOpen(left)),
@@ -97,6 +104,7 @@ export function chestSlots(engine) {
     });
   };
   const off = live(el, build);
+  renderChestIcons(engine).then(() => el.replaceChildren(...(build(net.profile) ?? [])));
   // Countdowns tick every second without a server round trip.
   const timer = setInterval(() => el.replaceChildren(...(build(net.profile) ?? [])), 1000);
   return { el, destroy: () => (off(), clearInterval(timer)) };
