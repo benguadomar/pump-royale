@@ -2,7 +2,6 @@ import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { vec3 } from 'three/tsl';
 import { surfaceColor, surfaceRoughness, surfaceMetalness, windPosition, rimLight, SURF } from './shaders.js';
-
 /**
  * Procedural low-poly 3D models for every card and tower, built from primitives in the
  * style of the card art (a pale round-headed mascot in costumes), plus the animator that
@@ -881,7 +880,10 @@ function towerTemplate(kind, team) {
 // ------------------------------------------------------------------ authored models
 
 /** Sculpted tower models that replace the procedural ones once loaded (footprint in world units). */
-const TOWER_MODELS = { king: { url: '/assets/models/king-tower.glb', width: 3.6 } };
+const TOWER_MODELS = {
+  king: { url: '/assets/models/king-tower.glb', width: 3.6 },
+  princess: { url: '/assets/models/princess-tower.glb', width: 3.3 },
+};
 /** Per kind: { teams: [blue, red] Object3D, top, half } — `half` is the wall half-width (for crack decals). */
 const towerModels = {};
 
@@ -933,6 +935,63 @@ function wallHalfWidth(src, height) {
   return half * 0.92;
 }
 
+/**
+ * Re-parents a mesh under a Group sitting at `pivot` (in the mesh's parent space) so rotations
+ * happen around that point. Quantization moves a mesh's own origin, so pivots are found from
+ * the geometry here: the king turns at his feet, the cannon on its axle.
+ */
+function pivotMesh(mesh, pivotOf) {
+  const parent = mesh.parent;
+  parent.updateMatrixWorld(true);
+  const inParent = new THREE.Matrix4().copy(parent.matrixWorld).invert().multiply(mesh.matrixWorld);
+  const pts = [];
+  const pos = mesh.geometry.attributes.position;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i += 3) pts.push(v.fromBufferAttribute(pos, i).applyMatrix4(inParent).clone());
+  const pivot = pivotOf(pts);
+  const group = new THREE.Group();
+  group.name = `${mesh.name}-pivot`;
+  group.position.copy(pivot);
+  parent.add(group);
+  group.attach(mesh);
+  return { group, pts: pts.map((p) => p.sub(pivot)) };
+}
+
+const boxOf = (pts) => new THREE.Box3().setFromPoints(pts);
+
+/** Skin weights for the sculpted king: root (feet) → spine (waist) → head (neck up), blended smoothly. */
+function skinKing(geometry, toPivot, height) {
+  // Skinning quantized (int16-normalized) vertex data corrupts other meshes under WebGPU: use floats.
+  for (const name of ['position', 'normal', 'uv']) {
+    const a = geometry.attributes[name];
+    if (!a || a.array instanceof Float32Array) continue;
+    const out = new Float32Array(a.count * a.itemSize);
+    for (let i = 0; i < a.count; i++) for (let c = 0; c < a.itemSize; c++) out[i * a.itemSize + c] = a.getComponent(i, c);
+    geometry.setAttribute(name, new THREE.BufferAttribute(out, a.itemSize));
+  }
+  const pos = geometry.attributes.position;
+  const n = pos.count;
+  const si = new Uint16Array(n * 4);
+  const sw = new Float32Array(n * 4);
+  const v = new THREE.Vector3();
+  const smoothstep = (a, b, x) => {
+    const k = Math.min(1, Math.max(0, (x - a) / (b - a)));
+    return k * k * (3 - 2 * k);
+  };
+  for (let i = 0; i < n; i++) {
+    const y = v.fromBufferAttribute(pos, i).applyMatrix4(toPivot).y / height;
+    const head = smoothstep(KING_NECK - 0.06, KING_NECK + 0.06, y);
+    const spine = smoothstep(KING_WAIST - 0.08, KING_WAIST + 0.08, y) * (1 - head);
+    si.set([0, 1, 2, 0], i * 4);
+    sw.set([1 - head - spine, spine, head, 0], i * 4);
+  }
+  geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
+  geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
+}
+/** Bone heights as a fraction of the king's height (measured on the sculpt). */
+const KING_WAIST = 0.22;
+const KING_NECK = 0.5;
+
 /** Loads the sculpted towers (called during boot; procedural towers are the fallback). */
 export async function loadTowerModels() {
   const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
@@ -941,6 +1000,27 @@ export async function loadTowerModels() {
     Object.entries(TOWER_MODELS).map(async ([kind, def]) => {
       const gltf = await loader.loadAsync(def.url);
       const src = gltf.scene;
+      const crew = {};
+      const king = src.getObjectByName('king')?.isMesh ? src.getObjectByName('king') : src.getObjectByName('king')?.children.find((o) => o.isMesh);
+      const cannon = src.getObjectByName('cannon')?.isMesh ? src.getObjectByName('cannon') : src.getObjectByName('cannon')?.children.find((o) => o.isMesh);
+      if (king && cannon) {
+        const k = pivotMesh(king, (pts) => {
+          const b = boxOf(pts);
+          return new THREE.Vector3((b.min.x + b.max.x) / 2, b.min.y, (b.min.z + b.max.z) / 2);
+        });
+        const c = pivotMesh(cannon, (pts) => {
+          const minY = boxOf(pts).min.y;
+          const b = boxOf(pts.filter((p) => p.y < minY + 0.2));
+          return b.getCenter(new THREE.Vector3());
+        });
+        const kingBox = boxOf(k.pts);
+        const height = kingBox.max.y;
+        // Barrel tip: the gun's most forward point; the recoil runs back along axle → tip.
+        const tip = c.pts.reduce((a, p) => (p.z > a.z ? p : a), c.pts[0]).clone();
+        Object.assign(crew, { height, tip, recoilDir: tip.clone().normalize() });
+        // After attach(), king.matrix maps the (quantized) geometry into the pivot's space.
+        skinKing(king.geometry, king.matrix, height);
+      }
       const box = new THREE.Box3().setFromObject(src);
       const size = box.getSize(new THREE.Vector3());
       const scale = def.width / Math.max(size.x, size.z);
@@ -961,9 +1041,96 @@ export async function loadTowerModels() {
         o.material = o.material.clone();
         o.material.map = recolorForRed(o.material.map);
       });
-      towerModels[kind] = { teams: [holder, red], top: size.y * scale, half: wallHalfWidth(src, size.y) };
+      towerModels[kind] = { teams: [holder, red], top: size.y * scale, half: wallHalfWidth(src, size.y), crew: crew.height ? crew : null };
     }),
   );
+}
+
+/** Swaps the sculpt's static king for a SkinnedMesh on three bones (feet, waist, neck) in its pivot. */
+function rigSculptKing(model, info) {
+  const king = model.getObjectByName('king');
+  const pivot = king.parent;
+  const skinned = new THREE.SkinnedMesh(king.geometry, king.material);
+  skinned.position.copy(king.position);
+  skinned.quaternion.copy(king.quaternion);
+  skinned.scale.copy(king.scale);
+  skinned.castShadow = true;
+  skinned.receiveShadow = true;
+  skinned.userData.baseMat = king.material;
+  const root = new THREE.Bone();
+  const spine = new THREE.Bone();
+  const head = new THREE.Bone();
+  spine.position.y = KING_WAIST * info.height;
+  head.position.y = (KING_NECK - KING_WAIST) * info.height;
+  root.add(spine);
+  spine.add(head);
+  pivot.add(root);
+  pivot.remove(king);
+  pivot.add(skinned);
+  model.updateMatrixWorld(true);
+  skinned.bind(new THREE.Skeleton([root, spine, head]));
+  return { pivot, bones: { root, spine, head } };
+}
+
+const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+
+/**
+ * Animates the sculpted king and his cannon: dozing while the King Tower sleeps, a hop when it
+ * wakes, breathing and looking around, turning with the cannon toward the target (within the
+ * parapet), and a recoil kick on every shot. Same interface as Animator for the battle view.
+ */
+export class SculptKingAnimator {
+  constructor({ aim, facing, king, cannon, info, hitSpeed = 1 }) {
+    this.aim = aim;
+    this.facing = facing;
+    this.king = king;
+    this.cannon = cannon;
+    this.info = info;
+    this.hitSpeed = hitSpeed;
+    this.rest = { cannon: cannon.position.clone(), cannonRot: cannon.rotation.clone() };
+    this.since = 99;
+    this.yaw = 0;
+    this.wake = 0;
+    this.wasAsleep = null;
+    this.engaged = false;
+    this.seed = Math.random() * 10;
+  }
+
+  attack() {
+    this.since = 0;
+  }
+
+  flinch() {}
+
+  update(dt, t, { asleep = false, frozen = false } = {}) {
+    if (frozen) return;
+    this.since += dt;
+    this.engaged = this.since < this.hitSpeed + 0.8;
+    if (this.wasAsleep && !asleep) this.wake = 1;
+    this.wasAsleep = asleep;
+    this.wake = Math.max(0, this.wake - dt * 1.6);
+
+    // Turn toward the target the battle view steers `aim` at, clamped so nothing leaves the parapet.
+    const want = this.engaged && !asleep ? Math.max(-0.85, Math.min(0.85, wrapAngle(this.aim.rotation.y - this.facing))) : 0;
+    this.yaw += (want - this.yaw) * Math.min(1, dt * 6);
+
+    // Recoil: back along the barrel, nose up, then spring home.
+    const k = this.since < 0.06 ? this.since / 0.06 : Math.max(0, 1 - (this.since - 0.06) / 0.35) ** 2;
+    const c = this.cannon;
+    c.position.copy(this.rest.cannon).addScaledVector(this.info.recoilDir, -0.06 * k);
+    c.rotation.set(this.rest.cannonRot.x - 0.16 * k, this.rest.cannonRot.y + this.yaw, this.rest.cannonRot.z);
+
+    const { root, spine, head } = this.king.bones;
+    const breathe = Math.sin(t * (asleep ? 1.3 : 2.4) + this.seed);
+    const hop = Math.sin(this.wake * Math.PI) * 0.08;
+    root.position.y = hop * this.info.height;
+    root.rotation.set(0, this.yaw * 0.55, 0);
+    root.scale.set(1, 1 + breathe * 0.015, 1);
+    // Blast pushes him back; asleep he slumps forward.
+    spine.rotation.set((asleep ? 0.18 : 0) - 0.14 * k + breathe * 0.02, Math.sin(t * 0.6 + this.seed) * 0.04, Math.sin(t * 0.9 + this.seed) * 0.03);
+    const look = this.engaged || asleep ? 0 : Math.sin(t * 0.45 + this.seed) * 0.55;
+    head.rotation.set(asleep ? 0.35 + breathe * 0.04 : -0.06 * k + Math.sin(t * 0.7 + this.seed) * 0.04, look + this.yaw * 0.35, 0);
+  }
 }
 
 /** A 3D tower with a live crew (archer, or the king with his cannon) standing on top. */
@@ -979,6 +1146,24 @@ export function makeTowerObject(kind, team) {
     model.traverse((o) => o.isMesh && (o.userData.baseMat = o.material));
     if (team === 0) model.rotation.y = Math.PI;
     body.add(model);
+    if (sculpt.crew) {
+      const king = rigSculptKing(model, sculpt.crew);
+      const cannon = model.getObjectByName('cannon').parent;
+      const muzzle = new THREE.Object3D();
+      muzzle.position.copy(sculpt.crew.tip);
+      cannon.add(muzzle);
+      // The battle view steers `aim` toward targets; the animator turns king and cannon from it.
+      const aim = new THREE.Group();
+      aim.rotation.y = model.rotation.y;
+      tower.root.add(aim);
+      const animator = new SculptKingAnimator({ aim, facing: model.rotation.y, king, cannon, info: sculpt.crew, hitSpeed: kind === 'king' ? 1 : 0.8 });
+      tower.root.userData = {
+        body,
+        wall: { half: sculpt.half, top: sculpt.top * 0.7 },
+        crew: { root: aim, launch: muzzle, animator, groups: {}, meshes: [], style: 'sculpt', scale: 1, height: sculpt.top, base: {} },
+      };
+      return tower.root;
+    }
   }
   const crew = instantiate(t.crew, { skin: true });
   crew.root.position.y = t.top;

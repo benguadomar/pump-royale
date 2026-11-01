@@ -801,6 +801,8 @@ export function buildWorld(engine) {
     update(dt, t) {
       for (const b of bobbers) b.mesh.position.y = b.baseY + Math.sin(t * b.speed + b.phase) * b.amp;
       pebbles.rotation.y = t * 0.01;
+      // Lobby kings are awake: breathing and looking around.
+      if (lobbyTowers.visible) for (const g of lobbyTowers.children) g.userData.crew?.animator?.update(dt, t);
     },
     setDetail(high) {
       for (const m of highOnly) m.visible = high;

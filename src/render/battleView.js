@@ -170,7 +170,7 @@ export class BattleView {
         towerKind: e.towerKind,
         obj,
         crew,
-        anim: new Animator(crew, { hitSpeed: TOWERS[e.towerKind].hitSpeed }),
+        anim: crew.animator ? Object.assign(crew.animator, { hitSpeed: TOWERS[e.towerKind].hitSpeed }) : new Animator(crew, { hitSpeed: TOWERS[e.towerKind].hitSpeed }),
         meshes,
         plate,
         flash: 0,
