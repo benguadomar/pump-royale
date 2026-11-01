@@ -1,13 +1,24 @@
 import * as THREE from 'three/webgpu';
 import { buildUnit } from './models.js';
-import { loadSpellModels, makeBarrel, makeArrow, spellModelsReady } from './spells.js';
+import { loadSpellModels, makeBarrel, makeArrow, makeFireball, spellModelsReady } from './spells.js';
 import { CARDS, HAS_PNG, GENERATED_ART, isSpell } from '../data/cards.js';
 
-/** Spell cards show their model: a tilted powder barrel, or a fan of flaming arrows. */
+/** Spell cards show their model: a tilted powder barrel, a blazing fireball, or a fan of flaming arrows. */
 function spellPortrait(id) {
   if (!spellModelsReady()) return null;
   const root = new THREE.Group();
-  if (id === 'barrel-bomb') {
+  if (id === 'fireball') {
+    const { obj, mixer } = makeFireball();
+    mixer.update(0.4);
+    obj.updateMatrixWorld(true);
+    // The portrait is framed on the bounding box, so drop the longest flame tongues to keep the ball big.
+    const box = new THREE.Box3();
+    const long = [];
+    obj.traverse((o) => o.isMesh && box.setFromObject(o) && Math.max(box.max.length(), box.min.length()) > 0.6 && long.push(o));
+    for (const o of long) o.removeFromParent();
+    obj.rotation.set(0.3, 0, 0.2);
+    root.add(obj);
+  } else if (id === 'barrel-bomb') {
     const b = makeBarrel();
     b.rotation.set(0.25, 0.6, -0.35);
     root.add(b);

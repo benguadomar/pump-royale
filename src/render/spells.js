@@ -1,16 +1,17 @@
 import * as THREE from 'three/webgpu';
 
-const URLS = { barrel: '/assets/models/barrel.glb', arrow: '/assets/models/fire-arrow.glb' };
-/** Barrel height and arrow length in world tiles. */
+const URLS = { barrel: '/assets/models/barrel.glb', arrow: '/assets/models/fire-arrow.glb', fireball: '/assets/models/fireball.glb' };
+/** Barrel height, arrow length and fireball diameter in world tiles. */
 const BARREL_SIZE = 1.15;
 const ARROW_LENGTH = 1.25;
+const FIREBALL_SIZE = 1.6;
 /** Seconds an arrow takes to fall from the sky, and how far apart arrows of one volley land. */
 export const ARROW_FALL = 0.55;
 const LAND_SPREAD = 0.2;
 const ARROWS_PER_VOLLEY = 26;
 const STUCK_TIME = 1.4;
 
-const models = { barrel: null, barrelMat: null, arrowParts: null };
+const models = { barrel: null, barrelMat: null, arrowParts: null, fireball: null, fireballClip: null };
 let loading = null;
 
 /** GLBs are quantized; transformed or merged geometry needs plain float attributes. */
@@ -30,7 +31,7 @@ export function loadSpellModels() {
   loading ??= (async () => {
     const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
     const loader = new GLTFLoader();
-    const [barrel, arrow] = await Promise.all([loader.loadAsync(URLS.barrel), loader.loadAsync(URLS.arrow)]);
+    const [barrel, arrow, fireball] = await Promise.all([loader.loadAsync(URLS.barrel), loader.loadAsync(URLS.arrow), loader.loadAsync(URLS.fireball)]);
 
     // Barrel: centred on its middle so it tumbles around its own axis.
     const b = barrel.scene;
@@ -73,11 +74,53 @@ export function loadSpellModels() {
       p.geometry.scale(ARROW_LENGTH / len, ARROW_LENGTH / len, ARROW_LENGTH / len);
     }
     models.arrowParts = parts;
+
+    // Fireball: a burst of flickering flame shards. Centred on the shard cloud, coloured gold at the
+    // core to deep orange at the tips; the few far-flung strays are dropped so the silhouette stays round.
+    const f = fireball.scene;
+    f.updateMatrixWorld(true);
+    const shards = [];
+    f.traverse((o) => o.isMesh && shards.push({ o, box: new THREE.Box3().setFromObject(o) }));
+    const core = shards.reduce((sum, x) => sum.add(x.box.getCenter(_p)), new THREE.Vector3()).divideScalar(shards.length);
+    // How far each shard's tip reaches from the core; the ball is sized by the 90th percentile.
+    for (const x of shards) x.tip = Math.max(x.box.min.distanceTo(core), x.box.max.distanceTo(core));
+    const tips = shards.map((x) => x.tip).sort((p, q) => p - q);
+    const reach = tips[Math.floor(tips.length * 0.9)];
+    const flames = [0xffc020, 0xff8000, 0xf05000].map((c) => new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide }));
+    const strays = new Set();
+    for (const { o, tip } of shards) {
+      const d = tip / reach;
+      o.material = flames[d < 0.55 ? 0 : d < 0.85 ? 1 : 2];
+      if (d < 1.25) continue;
+      strays.add(o.name);
+      o.removeFromParent();
+    }
+    const fs = FIREBALL_SIZE / (reach * 2);
+    f.scale.multiplyScalar(fs);
+    f.position.sub(core.multiplyScalar(fs));
+    // A molten core fills the gaps between the shards: white-hot centre inside a softer orange halo.
+    const coreBall = new THREE.Mesh(new THREE.SphereGeometry(FIREBALL_SIZE * 0.15, 20, 14), new THREE.MeshBasicMaterial({ color: 0xfff2c0 }));
+    const halo = new THREE.Mesh(
+      new THREE.SphereGeometry(FIREBALL_SIZE * 0.27, 20, 14),
+      new THREE.MeshBasicMaterial({ color: 0xff9a10, transparent: true, opacity: 0.35, depthWrite: false }),
+    );
+    models.fireball = new THREE.Group().add(f, coreBall, halo);
+    const tracks = fireball.animations.flatMap((clip) => clip.tracks).filter((t) => !strays.has(t.name.slice(0, t.name.lastIndexOf('.'))));
+    models.fireballClip = new THREE.AnimationClip('flicker', -1, tracks);
   })();
   return loading;
 }
 
-export const spellModelsReady = () => Boolean(models.barrel && models.arrowParts);
+export const spellModelsReady = () => Boolean(models.barrel && models.arrowParts && models.fireball);
+
+/** A fresh fireball with its own looping flame flicker; call `mixer.update(dt)` every frame. */
+export function makeFireball() {
+  if (!models.fireball) return null;
+  const obj = models.fireball.clone();
+  const mixer = new THREE.AnimationMixer(obj);
+  mixer.clipAction(models.fireballClip).play();
+  return { obj, mixer };
+}
 
 /** A fresh barrel (shared geometry/materials). */
 export function makeBarrel() {

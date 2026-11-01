@@ -5,7 +5,7 @@ import { CARD_BY_ID, SPEEDS, TOWERS, isSpell } from '../data/cards.js';
 import { buildUnit, makeTowerObject, Animator, ghostify, flashMat, frozenMat, rageMat } from './models.js';
 import { tileToWorld } from './engine.js';
 import { sfx } from '../audio.js';
-import { ArrowVolley, makeBarrel, barrelMaterial, spellModelsReady } from './spells.js';
+import { ArrowVolley, makeBarrel, makeFireball, barrelMaterial, spellModelsReady } from './spells.js';
 
 const TEAM_COLOR = [0x3d8ff0, 0xe2463c];
 const TEAM_RGB = [[0.45, 0.75, 1], [1, 0.45, 0.4]];
@@ -783,7 +783,11 @@ export class BattleView {
     const kind = ev.card === 'fireball' ? 'spellFireball' : ev.card === 'arrows' ? 'spellArrows' : 'spellBarrel';
     const start = tileToWorld(ev.fx, ev.fy, 6);
     let mesh;
-    if (kind === 'spellArrows') {
+    let mixer = null;
+    const fireball = kind === 'spellFireball' && makeFireball();
+    if (fireball) {
+      ({ obj: mesh, mixer } = fireball);
+    } else if (kind === 'spellArrows') {
       mesh = new THREE.Group();
       for (let i = 0; i < 14; i++) {
         const a = new THREE.Mesh(this.geo.arrow, this.mat.arrow);
@@ -796,7 +800,8 @@ export class BattleView {
     }
     mesh.position.copy(start);
     this.group.add(mesh);
-    this.projectiles.push({ mesh, kind, ev: { ...ev, th: 0.3, tx: ev.x, ty: ev.y }, t: 0, start, tx: ev.x, ty: ev.y, trail: 0, spell: true });
+    this.projectiles.push({ mesh, kind, mixer, ev: { ...ev, th: 0.3, tx: ev.x, ty: ev.y }, t: 0, start, tx: ev.x, ty: ev.y, trail: 0, spell: true });
+    if (kind === 'spellFireball') this.sfx.fireball();
   }
 
   updateProjectiles(dt) {
@@ -819,6 +824,12 @@ export class BattleView {
         // End-over-end tumble, slightly off-axis so it reads as a thrown barrel.
         p.mesh.rotation.x += dt * 7;
         p.mesh.rotation.z += dt * 2.5;
+      }
+      else if (p.mixer) {
+        // The flame shards flicker on their own; the whole ball rolls forward and swirls.
+        p.mixer.update(dt);
+        p.mesh.rotation.x += dt * 5;
+        p.mesh.rotation.y += dt * 3;
       }
       else p.mesh.rotation.x += dt * 8;
       p.trail -= dt;
@@ -935,9 +946,15 @@ export class BattleView {
     const r = ev.radius;
     switch (ev.card) {
       case 'fireball':
-        this.fx.explosion(p, r * 0.8, 'fireball');
-        this.fx.shockwave(p, [1, 0.55, 0.2], r * 2.6);
-        this.shake(0.35);
+        // Magic blast: white-hot flash, double shockwave, a fire column, embers, then a scorched patch.
+        this.fx.spawn('glow', { x: p.x, y: 1, z: p.z }, { size: r * 2.2, life: 0.18, tint: [1, 0.8, 0.45] });
+        this.fx.explosion(p, r * 1.0, 'fireball');
+        this.fx.shockwave(p, [1, 0.55, 0.2], r * 2.8);
+        this.fx.shockwave(p, [1, 0.85, 0.4], r * 1.6);
+        this.fx.fire({ x: p.x, y: 0.8, z: p.z }, 22, r * 0.5, r * 0.9);
+        this.fx.sparks({ x: p.x, y: 0.6, z: p.z }, 26, [1, 0.65, 0.25], 9);
+        this.fx.spawn('scorch', { x: p.x, y: 0.07, z: p.z }, { size: r * 1.8, life: 4 });
+        this.shake(0.45);
         this.sfx.boom();
         break;
       case 'arrows':
