@@ -4,7 +4,7 @@ import { toastMsg } from './widgets.js';
 import { fmtSecs } from './progress.js';
 import { net } from '../net.js';
 import { sfx } from '../audio.js';
-import { CARDS, CARD_BY_ID, cardImg, isSpell } from '../data/cards.js';
+import { CARDS, CARD_BY_ID, cardImg } from '../data/cards.js';
 
 export const BADGE_COLORS = ['#e8b021', '#3c8ce8', '#d8443a', '#3cbc5a', '#9b5ae0', '#2ec4c4', '#ee7a2e', '#6f7f95'];
 const REQUESTABLE = new Set(['Common', 'Rare', 'Epic']);
@@ -187,7 +187,7 @@ export function openClan() {
               openClan();
             } else clanError(res);
           },
-        }, img(cardImg(c.id), 'art'), h('div', { class: 'name' }, c.name), h('small', { class: 'dim' }, `${isSpell(c) ? 'Spell' : c.type} · ${c.rarity}`)),
+        }, img(cardImg(c.id), 'art'), h('div', { class: 'name' }, c.name), h('small', { class: 'dim' }, `${c.type} · ${c.rarity}`)),
       ),
     );
     const close = openModal({ cls: 'request-modal', title: 'REQUEST A CARD', body: [h('p', { class: 'dim' }, 'Clanmates can donate up to 10 Common, 3 Rare or 1 Epic. One request every 4 hours.'), grid] });

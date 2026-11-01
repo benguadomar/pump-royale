@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import ws from 'ws';
 import { Pool, neonConfig } from '@neondatabase/serverless';
 import { log } from './log.js';
+import { CARD_BY_ID } from '../src/data/cards.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, 'data');
@@ -62,6 +63,9 @@ CREATE TABLE IF NOT EXISTS docs (
   PRIMARY KEY (kind, id)
 );
 `;
+
+/** Replays that use retired cards can no longer be simulated; they are hidden. */
+const playable = (r) => r?.record?.decks?.every((d) => d.every((id) => CARD_BY_ID[id])) ?? false;
 
 const blank = (name, country) => ({ name, country, towers: 0, cards: 0, wins: 0, losses: 0, pvpWins: 0, pvpLosses: 0, streak: 0, bestStreak: 0 });
 
@@ -186,11 +190,12 @@ export class Store {
   }
 
   publicReplays() {
-    return (this.doc('tv', 'list') ?? []).map(({ record, ...meta }) => meta);
+    return (this.doc('tv', 'list') ?? []).filter(playable).map(({ record, ...meta }) => meta);
   }
 
   publicReplay(id) {
-    return (this.doc('tv', 'list') ?? []).find((r) => r.id === id) ?? null;
+    const r = (this.doc('tv', 'list') ?? []).find((x) => x.id === id);
+    return playable(r) ? r : null;
   }
 
   /** For /healthz: the database answers (JSON storage is always healthy). */
@@ -305,14 +310,14 @@ export class Store {
       const { rows } = await this.pool.query('SELECT data FROM replays WHERE player = $1 ORDER BY created_at DESC LIMIT $2', [player, REPLAYS_PER_PLAYER]);
       this.replays[player] = rows.map((r) => r.data);
     }
-    return (this.replays[player] ?? []).map(({ record, ...meta }) => meta);
+    return (this.replays[player] ?? []).filter(playable).map(({ record, ...meta }) => meta);
   }
 
   async getReplay(player, id) {
     const hit = (this.replays[player] ?? []).find((r) => r.id === id);
-    if (hit || !this.pool) return hit ?? null;
+    if (hit || !this.pool) return playable(hit) ? hit : null;
     const { rows } = await this.pool.query('SELECT data FROM replays WHERE id = $1 AND player = $2', [id, player]);
-    return rows[0]?.data ?? null;
+    return playable(rows[0]?.data) ? rows[0].data : null;
   }
 
   scheduleFileSave() {

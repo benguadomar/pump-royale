@@ -1,4 +1,4 @@
-import { CARDS, CARD_BY_ID, isSpell } from './cards.js';
+import { CARDS, CARD_BY_ID } from './cards.js';
 import { ARENAS } from './arenas.js';
 
 // Progression rules shared by the server (which applies them) and the client (which
@@ -88,8 +88,6 @@ export const QUEST_KINDS = [
   { kind: 'win', text: 'Win {n} battles', n: [1, 2, 3], reward: { gold: 60, pass: 40 } },
   { kind: 'play', text: 'Play {n} battles', n: [2, 3, 4], reward: { gold: 40, pass: 30 } },
   { kind: 'crowns', text: 'Destroy {n} towers', n: [2, 4, 6], reward: { gold: 70, pass: 40 } },
-  { kind: 'spells', text: 'Cast {n} spells', n: [4, 8, 12], reward: { gold: 50, pass: 30 } },
-  { kind: 'air', text: 'Deploy {n} flying troops', n: [3, 6, 9], reward: { gold: 50, pass: 30 } },
   { kind: 'elixir', text: 'Spend {n} elixir', n: [40, 80, 120], reward: { gems: 5, pass: 40 } },
 ];
 export const QUESTS_PER_DAY = 3;
@@ -135,7 +133,8 @@ export function newProfile(now = Date.now()) {
 /** Rolls fresh daily quests when the UTC day changes. */
 export function refreshQuests(p, rand, now = Date.now()) {
   const day = dayKey(now);
-  if (p.quests.day === day) return false;
+  // Same day keeps its quests, unless one of them is a kind that no longer exists.
+  if (p.quests.day === day && p.quests.list.every((q) => QUEST_KINDS.some((k) => k.kind === q.kind))) return false;
   const pool = [...QUEST_KINDS];
   const list = [];
   for (let i = 0; i < QUESTS_PER_DAY && pool.length; i++) {
@@ -194,10 +193,8 @@ export function applyMatch(p, stats) {
     if (stats.result === 'win') s.wins++;
   }
 
-  const spells = Object.entries(stats.deployed).reduce((n, [id, c]) => n + (isSpell(CARD_BY_ID[id]) ? c : 0), 0);
-  const air = Object.entries(stats.deployed).reduce((n, [id, c]) => n + (CARD_BY_ID[id]?.air ? c * CARD_BY_ID[id].count : 0), 0);
   const elixir = Object.entries(stats.deployed).reduce((n, [id, c]) => n + CARD_BY_ID[id].cost * c, 0);
-  const progress = { win: stats.result === 'win' ? 1 : 0, play: 1, crowns: stats.myCrowns, spells, air, elixir };
+  const progress = { win: stats.result === 'win' ? 1 : 0, play: 1, crowns: stats.myCrowns, elixir };
   for (const q of p.quests.list) if (!q.claimed) q.progress = Math.min(q.target, q.progress + (progress[q.kind] ?? 0));
 
   const arenasBefore = ARENAS.filter((a) => before >= a.trophies).length;

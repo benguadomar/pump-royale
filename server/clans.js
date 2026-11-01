@@ -50,7 +50,7 @@ export class Clans {
   /** Full view for a member. Requests carry `mine` so the client can hide its own Donate button. */
   view(c, viewer) {
     const now = Date.now();
-    c.requests = c.requests.filter((r) => now - r.ts < REQUEST_TTL_MS && r.got < r.need);
+    c.requests = c.requests.filter((r) => now - r.ts < REQUEST_TTL_MS && r.got < r.need && CARD_BY_ID[r.card]);
     const me = c.members.find((m) => m.id === viewer);
     return {
       ...this.summary(c),

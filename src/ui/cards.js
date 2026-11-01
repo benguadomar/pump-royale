@@ -1,7 +1,7 @@
 import { h, img } from './dom.js';
 import { openModal } from './modal.js';
 import { sfx } from '../audio.js';
-import { CARDS, TOWERS, cardImg, isSpell, TOWER_SPELL_FACTOR } from '../data/cards.js';
+import { CARDS, TOWERS, cardImg } from '../data/cards.js';
 import { upgradeCost, MAX_CARD_LEVEL, START_LEVEL } from '../data/economy.js';
 import { net } from '../net.js';
 import { econ } from './progress.js';
@@ -37,23 +37,7 @@ export function cardTile(card, { selected, inDeck, onclick } = {}) {
   );
 }
 
-export const kindLabel = (card) => `${card.rarity ?? 'Common'} ${card.type}${card.air ? ' · Flying' : ''}${card.count > 1 ? ` · x${card.count}` : ''}`;
-
-/** One-line description of a card's special mechanic, if it has one. */
-function special(card) {
-  const sp = card.spell;
-  if (sp?.stun) return `Stuns for ${sp.stun}s`;
-  if (sp?.freeze) return `Freezes for ${sp.freeze}s`;
-  if (sp?.rage) return `+35% speed for ${sp.rage}s`;
-  if (sp?.spawn) return `Spawns ${sp.spawnCount} Goblins`;
-  if (sp?.knockback) return 'Knocks back light troops';
-  if (card.spin) return '360° spin attack';
-  if (card.charge) return `Charges after ${card.charge} tiles (x2 damage)`;
-  if (card.hidden) return 'Hides underground until a target is in range';
-  if (card.ramp) return `Ramps ${card.ramp.join(' → ')} damage`;
-  if (card.deathDamage) return `Death bomb: ${card.deathDamage} damage`;
-  return null;
-}
+export const kindLabel = (card) => `${card.rarity ?? 'Common'} ${card.type}${card.count > 1 ? ` · x${card.count}` : ''}`;
 
 function statRow(label, value, fraction) {
   return h(
@@ -65,18 +49,6 @@ function statRow(label, value, fraction) {
 }
 
 function cardStats(card) {
-  if (isSpell(card)) {
-    const rows = [];
-    if (card.damage) {
-      rows.push(statRow('Damage', card.damage, card.damage / BAR_MAX.damage));
-      rows.push(statRow('Crown Tower Damage', Math.round(card.damage * TOWER_SPELL_FACTOR), (card.damage * TOWER_SPELL_FACTOR) / BAR_MAX.damage));
-    }
-    rows.push(statRow('Radius', `${card.spell.radius} tiles`, card.spell.radius / 5));
-    const fx = special(card);
-    if (fx) rows.push(statRow('Effect', fx, 0));
-    rows.push(statRow('Targets', card.targets, 0));
-    return rows;
-  }
   const rangeVal = card.range === 'Melee' ? 'Melee' : card.range.toFixed(1);
   const rows = [
     statRow('Hitpoints', card.hp, card.hp / BAR_MAX.hp),
@@ -89,8 +61,6 @@ function cardStats(card) {
   if (card.count > 1) rows.push(statRow('Count', `x${card.count}`, 0));
   if (card.splash) rows.push(statRow('Splash', `${card.splash} radius`, 0));
   rows.push(statRow('Targets', card.targets, 0));
-  const fx = special(card);
-  if (fx) rows.push(statRow('Special', fx, 0));
   return rows;
 }
 
@@ -158,9 +128,7 @@ const SORTS = {
 };
 const FILTERS = {
   all: () => true,
-  troops: (c) => c.type === 'Troop' && !c.air,
-  air: (c) => c.air,
-  spells: (c) => isSpell(c),
+  troops: (c) => c.type === 'Troop',
   buildings: (c) => c.type === 'Building',
 };
 
