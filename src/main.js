@@ -145,11 +145,14 @@ async function boot() {
   };
 
   // Trophies are cached locally so arenas/UI work offline; the server copy is the truth.
-  net.on('profile', (p) => {
-    if (state.trophies === p.trophies) return;
+  const syncTrophies = (p) => {
+    if (!p || state.trophies === p.trophies) return;
     state.trophies = p.trophies;
     save();
-  });
+  };
+  net.on('profile', syncTrophies);
+  // The profile may have arrived while assets were still loading.
+  syncTrophies(net.profile);
 
   let starting = false;
   /** Ranked vs AI: the server deals the seed, decks and levels so it can verify the result. */
