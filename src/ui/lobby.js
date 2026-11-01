@@ -9,7 +9,6 @@ import { net } from '../net.js';
 import { state, save, currentArena } from '../state.js';
 import { ARENAS } from '../data/arenas.js';
 import { resourceBar, chestSlots, questsBody } from './progress.js';
-import { walletSignIn, shortKey } from './account.js';
 import { openClan } from './clan.js';
 
 const X_URL = 'https://x.com/';
@@ -70,27 +69,6 @@ function liveTicker() {
   updOnline();
   el.destroy = () => offs.forEach((o) => o());
   return el;
-}
-
-// ------------------------------------------------------------------ wallet
-
-/** Shows the linked wallet; otherwise signs in with Phantom (signed challenge, no transaction). */
-function walletButton() {
-  const btn = h('button', { class: 'btn wallet-btn' });
-  const render = () => {
-    const key = net.account?.wallet;
-    btn.replaceChildren(icon('wallet'), key ? shortKey(key) : 'Connect Wallet');
-    btn.title = key ? 'Wallet linked to your account' : 'Sign in with Phantom';
-  };
-  btn.onclick = async () => {
-    sfx.click();
-    if (net.account?.wallet) return toastMsg('Wallet linked — manage it in your Profile');
-    if (await walletSignIn()) render();
-  };
-  const off = net.on('session', render);
-  render();
-  btn.destroy = off;
-  return btn;
 }
 
 // ------------------------------------------------------------------ popovers
@@ -195,17 +173,16 @@ export function createLobby({ engine, chat, onPlay, onOnline, onReplay }) {
   }
 
   const ping = pingPill();
-  const wallet = walletButton();
   const feedEl = feed();
   const ticker = liveTicker();
   const resources = resourceBar();
   const chests = chestSlots(engine);
-  destroyers.push(wallet.destroy, ping.destroy, feedEl.destroy, ticker.destroy, resources.destroy, chests.destroy);
+  destroyers.push(ping.destroy, feedEl.destroy, ticker.destroy, resources.destroy, chests.destroy);
 
   const root = h(
     'div',
     { class: 'hud lobby' },
-    h('div', { class: 'ping-row' }, ping, wallet),
+    h('div', { class: 'ping-row' }, ping),
     resources.el,
     ticker,
     chests.el,
