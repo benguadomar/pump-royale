@@ -1,6 +1,9 @@
 // Balance probes: equal-cost duels in open field, tower damage per elixir, and hits-to-kill.
 import { BattleSim } from '../src/sim/sim.js';
-import { CARDS, CARD_BY_ID, DEFAULT_DECK } from '../src/data/cards.js';
+import { CARDS as ALL_CARDS, CARD_BY_ID, DEFAULT_DECK, isSpell } from '../src/data/cards.js';
+
+// Spells are probed by tests/mechanics.mjs; duels are troops and buildings only.
+const CARDS = ALL_CARDS.filter((c) => !isSpell(c));
 
 const DT = 1 / 30;
 const FIGHTERS = CARDS.filter((c) => c.targets !== 'Buildings').map((c) => c.id);

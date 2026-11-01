@@ -1,6 +1,6 @@
 import { h, img, app, icon } from './dom.js';
 import { elixirBadge } from './cards.js';
-import { pingPill, leaderboardPanel, mediaBox, settingsBody, muteButton, fullscreenButton, flag } from './widgets.js';
+import { pingPill, leaderboardPanel, mediaBox, settingsBody, muteButton, fullscreenButton, flag, rankTag } from './widgets.js';
 import { sfx } from '../audio.js';
 import { state } from '../state.js';
 import { CARD_BY_ID, cardImg } from '../data/cards.js';
@@ -36,11 +36,11 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
   const status = h(
     'div',
     { class: 'match-status' },
-    h('div', { class: 'who opp' }, h('span', { class: 'dot' }), flag(session.oppFlag), session.oppName, oppStatus),
+    h('div', { class: 'who opp' }, h('span', { class: 'dot' }), flag(session.oppFlag), session.mode !== 'ai' && rankTag(session.oppName), session.oppName, oppStatus),
     h('div', { class: 'crown-row opp' }, img('/assets/ui/icon-crown.png'), oppCrowns),
     h('div', { class: 'time-row' }, timeBox, x2),
     h('div', { class: 'crown-row me' }, img('/assets/ui/icon-crown.png'), myCrowns),
-    h('div', { class: 'who me' }, h('span', { class: 'dot' }), flag(session.spectator?.players[0].country ?? state.country), session.spectator?.players[0].name ?? state.name),
+    h('div', { class: 'who me' }, h('span', { class: 'dot' }), flag(session.spectator?.players[0].country ?? state.country), rankTag(session.spectator?.players[0].name ?? state.name), session.spectator?.players[0].name ?? state.name),
   );
 
   // ---------------------------------------------------------------- deck bar (bottom centre)
@@ -85,7 +85,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
 
   const menuBtn = h('button', { class: 'btn menu-btn', onclick: () => (sfx.click(), confirmMenu()) }, 'Menu');
   const ping = pingPill();
-  const lb = leaderboardPanel({ tabs: ['wins'], compact: true });
+  const lb = leaderboardPanel({ tabs: ['trophies'], compact: true });
 
   const root = h(
     'div',

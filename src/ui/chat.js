@@ -2,7 +2,7 @@ import { h, timeHM } from './dom.js';
 import { net } from '../net.js';
 import { state } from '../state.js';
 import { sfx } from '../audio.js';
-import { flag } from './widgets.js';
+import { flag, rankTag, clanTag } from './widgets.js';
 
 const MAX_LINES = 60;
 
@@ -35,13 +35,13 @@ export function createChat() {
     input,
   );
 
-  function line({ name, text, ts, kind, country }) {
+  function line({ name, text, ts, kind, country, clan }) {
     if (kind === 'system') return h('div', { class: 'chat-line system' }, text);
     const cls = kind === 'ai' ? 'ai' : name === state.name ? 'me' : '';
     return h(
       'div',
       { class: `chat-line ${cls}` },
-      h('span', { class: 'who' }, flag(country), `${name}:`),
+      h('span', { class: 'who' }, flag(country), kind !== 'ai' && rankTag(name), `${name}`, kind !== 'ai' && clanTag(clan), ':'),
       h('span', { class: 'msg' }, text),
       h('span', { class: 'ts' }, timeHM(ts)),
     );

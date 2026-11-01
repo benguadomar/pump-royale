@@ -19,6 +19,8 @@ const TESLA_HIDE_AFTER = 1.2;
 const RAMP_AT = [2, 4];
 /** Troops lighter than this get pushed back by Fireball. */
 const KNOCKBACK_MAX_HP = 2000;
+/** Impulse per unit of a spell's `knockback`. */
+const SPELL_BLAST_J = 18;
 
 /** Momentum carried per point of damage, relative to a melee blow (arrows are light, bombs heavy). */
 const KNOCK_SCALE = { arrow: 0.3, bolt: 0.4, bullet: 0.5, fireball: 1, bomb: 1.3, cannonball: 1.1 };
@@ -164,9 +166,10 @@ export class BattleSim {
   castSpell(card, team, x, y) {
     const king = this.entities.find((e) => e.kind === 'tower' && e.towerKind === 'king' && e.team === team);
     const sp = card.spell;
-    const flight = sp.speed && king ? Math.max(0.25, dist(king, { x, y }) / sp.speed) : 0;
-    const s = { card, team, x, y, t: 0, flight, mult: levelMult(this.cardLevel(team, card.id)) };
-    this.emit({ e: 'spell', team, card: card.id, x, y, fx: king?.x ?? x, fy: king?.y ?? y, flight, radius: sp.radius });
+    // Lobbed spells fly from the King Tower; sky spells (`delay`) fall after a fixed time.
+    const flight = sp.delay ?? (sp.speed && king ? Math.max(0.25, dist(king, { x, y }) / sp.speed) : 0);
+    const s = { card, team, x, y, t: 0, flight, wave: 0, mult: levelMult(this.cardLevel(team, card.id)) };
+    this.emit({ e: 'spell', team, card: card.id, x, y, fx: king?.x ?? x, fy: king?.y ?? y, flight, radius: sp.radius, waves: sp.waves ?? 1, waveGap: sp.waveGap ?? 0 });
     if (flight === 0) this.resolveSpell(s);
     else this.spells.push(s);
   }
@@ -187,29 +190,31 @@ export class BattleSim {
       if (o.dead || o.hidden || Math.hypot(o.x - x, o.y - y) > sp.radius + o.radius) continue;
       if (sp.rage) continue;
       if (o.team === team) continue;
-      if (sp.damage) this.damage(o, sp.damage * s.mult * (o.kind === 'tower' ? TOWER_SPELL_FACTOR : 1), { team });
+      if (sp.damage) this.damage(o, (sp.damage / (sp.waves ?? 1)) * s.mult * (o.kind === 'tower' ? TOWER_SPELL_FACTOR : 1), { team });
       if (o.dead) continue;
       if (sp.stun) this.stun(o, sp.stun);
       if (sp.freeze) {
         o.frozen = Math.max(o.frozen ?? 0, sp.freeze);
         this.interrupt(o);
       }
-      if (sp.knockback && o.kind === 'troop' && o.maxHp < KNOCKBACK_MAX_HP) {
-        const d = Math.hypot(o.x - x, o.y - y) || 1;
-        o.x = clamp(o.x + ((o.x - x) / d) * sp.knockback, 0.4, ARENA_W - 0.4);
-        o.y = clamp(o.y + ((o.y - y) / d) * sp.knockback, 0.4, ARENA_H - 0.4);
-        this.interrupt(o);
+      // Blast impulse away from the centre: Δv = J / m, so light troops fly and tanks barely budge.
+      if (sp.knockback && o.kind === 'troop') {
+        impulse(o, o.x - x || 0.01, o.y - y, sp.knockback * SPELL_BLAST_J);
+        if (o.maxHp < KNOCKBACK_MAX_HP) this.interrupt(o);
       }
     }
-    this.emit({ e: 'spellHit', team, card: s.card.id, x, y, radius: sp.radius, duration: sp.rage ?? sp.freeze ?? sp.stun ?? 0 });
+    this.emit({ e: 'spellHit', team, card: s.card.id, x, y, radius: sp.radius, duration: sp.rage ?? sp.freeze ?? sp.stun ?? 0, wave: s.wave });
   }
 
   updateSpells(dt) {
     for (const s of this.spells) {
       s.t += dt;
-      if (s.t >= s.flight) {
-        s.done = true;
+      const sp = s.card.spell;
+      // Multi-wave spells split their damage over `waves` hits, `waveGap` seconds apart.
+      while (!s.done && s.t >= s.flight + s.wave * (sp.waveGap ?? 0)) {
         this.resolveSpell(s);
+        s.wave++;
+        if (s.wave >= (sp.waves ?? 1)) s.done = true;
       }
     }
     this.spells = this.spells.filter((s) => !s.done);

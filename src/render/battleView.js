@@ -4,6 +4,7 @@ import { CARD_BY_ID, SPEEDS, TOWERS, isSpell } from '../data/cards.js';
 import { buildUnit, makeTowerObject, Animator, ghostify, flashMat, frozenMat, rageMat } from './models.js';
 import { tileToWorld } from './engine.js';
 import { sfx } from '../audio.js';
+import { ArrowVolley, makeBarrel, barrelMaterial, spellModelsReady } from './spells.js';
 
 const TEAM_COLOR = [0x3d8ff0, 0xe2463c];
 const TEAM_RGB = [[0.45, 0.75, 1], [1, 0.45, 0.4]];
@@ -58,6 +59,7 @@ export class BattleView {
       zone: new THREE.CircleGeometry(1, 40).rotateX(-Math.PI / 2),
     };
     this.beams = new Map();
+    this.volleys = [];
     this.zones = [];
     this.debris = [];
     this.numLayer = document.createElement('div');
@@ -295,6 +297,7 @@ export class BattleView {
       }
     }
     this.updateProjectiles(dt);
+    this.updateVolleys(dt);
     this.updateDebris(dt);
     this.updateBeams(dt);
     this.updateZones(dt);
@@ -656,7 +659,8 @@ export class BattleView {
         // Landing marker so both players can see where it will hit.
         this.addZone(ev.x, ev.y, ev.radius, this.mat.spellRing, Math.max(0.35, ev.flight + 0.1));
         this.zones.at(-1).mesh.material.color.setHex(ev.team === 0 ? 0x9fd0ff : 0xff9f9f);
-        if (ev.flight > 0) this.spawnSpellProjectile(ev);
+        if (ev.card === 'fire-arrows') this.queueVolleys(ev);
+        else if (ev.flight > 0) this.spawnSpellProjectile(ev);
         this.sfx.spellCast();
         break;
       }
@@ -748,6 +752,25 @@ export class BattleView {
     this.projectiles.push({ mesh, kind, ev, t: 0, start, tx: ev.tx, ty: ev.ty, trail: 0 });
   }
 
+  /** Fire Arrows: one falling volley per sim wave, timed to land as that wave's damage hits. */
+  queueVolleys(ev) {
+    if (!spellModelsReady()) return;
+    const center = tileToWorld(ev.x, ev.y);
+    const from = tileToWorld(ev.fx, ev.fy);
+    const fromZ = Math.sign(from.z - center.z) || 1;
+    for (let w = 0; w < ev.waves; w++) this.volleys.push(new ArrowVolley(this.group, center, ev.radius, ev.flight + w * ev.waveGap, fromZ));
+  }
+
+  updateVolleys(dt) {
+    this.volleys = this.volleys.filter((v) =>
+      v.update(dt, this.fx, (pos) => {
+        this.fx.spawn('glow', { x: pos.x, y: 0.3, z: pos.z }, { size: 0.9, life: 0.16, tint: [1, 0.55, 0.2] });
+        this.fx.fire({ x: pos.x, y: 0.15, z: pos.z }, 2, 0.1, 0.45);
+        if (Math.random() < 0.35) this.fx.debris({ x: pos.x, y: 0.15, z: pos.z }, 2, 1.8, [0.5, 0.42, 0.3], 0.08);
+      }),
+    );
+  }
+
   /** Spells fly from the caster's King Tower; Arrows is a whole volley of shafts. */
   spawnSpellProjectile(ev) {
     const kind = ev.card === 'fireball' ? 'spellFireball' : ev.card === 'arrows' ? 'spellArrows' : 'spellBarrel';
@@ -761,7 +784,7 @@ export class BattleView {
         mesh.add(a);
       }
     } else {
-      mesh = new THREE.Mesh(kind === 'spellBarrel' ? this.geo.barrel : this.geo.sphere, this.mat[kind]);
+      mesh = (kind === 'spellBarrel' && makeBarrel()) || new THREE.Mesh(kind === 'spellBarrel' ? this.geo.barrel : this.geo.sphere, this.mat[kind]);
       if (kind === 'spellFireball') mesh.scale.setScalar(PROJECTILE_SIZE.spellFireball);
     }
     mesh.position.copy(start);
@@ -785,7 +808,11 @@ export class BattleView {
       const pos = p.mesh.position;
       const dir = pos.clone().add(pos.clone().sub(prev));
       if (p.kind === 'arrow' || p.kind === 'spellArrows') p.mesh.lookAt(dir);
-      else if (p.kind === 'spellBarrel') p.mesh.rotation.z += dt * 9;
+      else if (p.kind === 'spellBarrel') {
+        // End-over-end tumble, slightly off-axis so it reads as a thrown barrel.
+        p.mesh.rotation.x += dt * 7;
+        p.mesh.rotation.z += dt * 2.5;
+      }
       else p.mesh.rotation.x += dt * 8;
       p.trail -= dt;
       if (p.trail <= 0) {
@@ -802,6 +829,11 @@ export class BattleView {
           for (const c of p.mesh.children) {
             if (Math.random() < 0.3) this.fx.spawn('glow', c.getWorldPosition(_v), { size: 0.3, life: 0.18, tint: [1, 0.85, 0.5] });
           }
+        } else if (p.kind === 'spellBarrel') {
+          // Lit fuse: sparks and a thin smoke trail.
+          this.fx.spawn('spark', pos, { size: 0.22, life: 0.3, vel: [(Math.random() - 0.5) * 2, 1.5, (Math.random() - 0.5) * 2], gravity: 9.8, tint: [1, 0.75, 0.3] });
+          this.fx.spawn('glow', pos, { size: 0.6, life: 0.1, tint: [1, 0.6, 0.25] });
+          if (Math.random() < 0.5) this.fx.spawn('smoke', pos, { size: 0.5, life: 0.7, grow: 0.6, tint: [0.6, 0.58, 0.55] });
         } else if (p.kind === 'bomb') {
           this.fx.spawn('spark', { x: pos.x, y: pos.y + 0.3, z: pos.z }, { size: 0.16, life: 0.25, vel: [0, 1, 0], tint: [1, 0.8, 0.3] });
           this.fx.spawn('smoke', pos, { size: 0.35, life: 0.6, grow: 0.5, tint: [0.8, 0.8, 0.8] });
@@ -940,6 +972,43 @@ export class BattleView {
         this.fx.shockwave(p, [0.85, 0.35, 1], r * 2.2);
         this.sfx.rage();
         break;
+      case 'barrel-bomb': {
+        // Powder blast: fireball, shockwave, then the barrel's staves and hoops fly apart.
+        this.fx.explosion(p, r * 0.9, 'fireball');
+        this.fx.shockwave(p, [1, 0.6, 0.25], r * 2.8);
+        this.fx.fire({ x: p.x, y: 0.6, z: p.z }, 14, r * 0.45, r * 0.8);
+        const wood = barrelMaterial() ?? this.mat.spellBarrel;
+        for (let i = 0; i < 10; i++) {
+          const stave = new THREE.Mesh(this.geo.chunk, wood);
+          stave.scale.set(0.12, 0.6, 0.26);
+          this.addDebris(stave, { x: p.x, y: 0.7, z: p.z }, 5, 5.5, 1.8);
+        }
+        for (let i = 0; i < 2; i++) {
+          const hoop = new THREE.Mesh(this.geo.chunk, this.mat.cannonball);
+          hoop.scale.set(0.55, 0.05, 0.55);
+          this.addDebris(hoop, { x: p.x, y: 0.8, z: p.z }, 3, 6, 1.6);
+        }
+        this.shake(0.4);
+        this.sfx.boom();
+        this.sfx.barrel();
+        break;
+      }
+      case 'fire-arrows': {
+        // Each volley: a flash ring and the whoosh; the last one leaves the ground smouldering.
+        this.fx.shockwave(p, [1, 0.5, 0.15], r * 1.9);
+        this.fx.spawn('glow', { x: p.x, y: 0.6, z: p.z }, { size: r * 2.2, life: 0.18, tint: [1, 0.5, 0.2] });
+        this.sfx.arrows();
+        if (ev.wave === CARD_BY_ID['fire-arrows'].spell.waves - 1) {
+          this.fx.spawn('scorch', { x: p.x, y: 0.07, z: p.z }, { size: r * 2, life: 5 });
+          this.fx.emit(1.6, (dt) => {
+            if (Math.random() > dt * 14) return;
+            const a = Math.random() * Math.PI * 2;
+            const d = Math.sqrt(Math.random()) * r;
+            this.fx.spawn('fire', { x: p.x + Math.cos(a) * d, y: 0.2, z: p.z + Math.sin(a) * d }, { size: 0.6, life: 0.6, vel: [0, 1.2, 0], grow: 0.3 });
+          });
+        }
+        break;
+      }
       case 'goblin-barrel':
         for (let i = 0; i < 8; i++) {
           const mesh = new THREE.Mesh(this.geo.chunk, this.mat.spellBarrel);
@@ -1050,6 +1119,7 @@ export class BattleView {
   }
 
   destroy() {
+    this.volleys.forEach((v) => v.dispose());
     this.engine.scene.remove(this.group);
     this.fx.clearAll();
     this.group.traverse((o) => {

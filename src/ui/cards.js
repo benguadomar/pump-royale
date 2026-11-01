@@ -1,7 +1,7 @@
 import { h, img } from './dom.js';
 import { openModal } from './modal.js';
 import { sfx } from '../audio.js';
-import { CARDS, TOWERS, cardImg } from '../data/cards.js';
+import { CARDS, TOWERS, cardImg, isSpell, TOWER_SPELL_FACTOR } from '../data/cards.js';
 import { upgradeCost, MAX_CARD_LEVEL, START_LEVEL } from '../data/economy.js';
 import { net } from '../net.js';
 import { econ } from './progress.js';
@@ -48,7 +48,21 @@ function statRow(label, value, fraction) {
   );
 }
 
+function spellStats(card) {
+  const sp = card.spell;
+  const rows = [
+    statRow('Damage', card.damage, card.damage / BAR_MAX.damage),
+    statRow('Crown Tower Damage', Math.round(card.damage * TOWER_SPELL_FACTOR), (card.damage * TOWER_SPELL_FACTOR) / BAR_MAX.damage),
+    statRow('Radius', `${sp.radius} tiles`, sp.radius / 5),
+  ];
+  if (sp.waves > 1) rows.push(statRow('Volleys', `${sp.waves} × ${Math.round(card.damage / sp.waves)}`, 0));
+  if (sp.knockback) rows.push(statRow('Effect', 'Knocks back light troops', 0));
+  rows.push(statRow('Targets', card.targets, 0));
+  return rows;
+}
+
 function cardStats(card) {
+  if (isSpell(card)) return spellStats(card);
   const rangeVal = card.range === 'Melee' ? 'Melee' : card.range.toFixed(1);
   const rows = [
     statRow('Hitpoints', card.hp, card.hp / BAR_MAX.hp),
@@ -130,6 +144,7 @@ const FILTERS = {
   all: () => true,
   troops: (c) => c.type === 'Troop',
   buildings: (c) => c.type === 'Building',
+  spells: (c) => isSpell(c),
 };
 
 export function openCards() {

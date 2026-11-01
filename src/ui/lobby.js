@@ -3,7 +3,7 @@ import { openCards } from './cards.js';
 import { openDeck } from './deck.js';
 import { openProfile } from './profile.js';
 import { openModal } from './modal.js';
-import { pingPill, leaderboardPanel, mediaBox, settingsBody, flag, toastMsg } from './widgets.js';
+import { pingPill, leaderboardPanel, mediaBox, settingsBody, flag, toastMsg, rankTag } from './widgets.js';
 import { sfx } from '../audio.js';
 import { net } from '../net.js';
 import { state, save, currentArena } from '../state.js';
@@ -11,12 +11,15 @@ import { ARENAS } from '../data/arenas.js';
 import { aiDifficulty } from '../sim/aiDifficulty.js';
 import { resourceBar, chestSlots, questsBody } from './progress.js';
 import { openClan } from './clan.js';
+import { openDaily, dailyClaimable, showNotices } from './daily.js';
 
 const X_URL = 'https://x.com/';
+/** The daily calendar opens by itself at most once per page load. */
+let prompted = false;
 const MAX_FEED = 9;
 
 function feedText(item) {
-  const name = h('b', {}, item.name);
+  const name = h('b', {}, rankTag(item.name), item.name);
   if (item.kind === 'join') return [name, ' joined the arena'];
   if (item.kind === 'back') return [name, ' is back online'];
   if (item.kind === 'pvp') return [name, ` beat ${item.opp} in 1v1 · ${item.crowns}`];
@@ -126,6 +129,7 @@ export function createLobby({ engine, chat, onPlay, onOnline, onReplay }) {
     'div',
     { class: 'side-col wood panel', onpointerdown: (e) => e.stopPropagation() },
     sideBtn('profile', img('/assets/ui/icon-profile.png'), 'Profile', () => (closePop(), openProfile({ onReplay }))),
+    sideBtn('daily', [icon('gift'), h('span', { class: 'notify-dot' })], 'Daily reward', () => (closePop(), openDaily())),
     sideBtn('quests', icon('quest'), 'Quests & Season Pass', () => togglePop('quests', questsBody)),
     sideBtn('clan', icon('shield'), 'Clan', () => (closePop(), openClan())),
     sideBtn('settings', icon('gear'), 'Settings', () => togglePop('settings', () => settingsBody(engine))),
@@ -213,6 +217,16 @@ export function createLobby({ engine, chat, onPlay, onOnline, onReplay }) {
   ro.observe(lb);
   const onDocDown = () => closePop();
   window.addEventListener('pointerdown', onDocDown);
+
+  // Daily reward dot; once per session the calendar (or a ladder payout notice) pops up by itself.
+  const onProfile = () => {
+    sideButtons.daily.classList.toggle('notify', dailyClaimable());
+    if (prompted || !net.profile || document.querySelector('.login-gate, .backdrop')) return;
+    prompted = true;
+    if (!showNotices() && dailyClaimable()) openDaily();
+  };
+  destroyers.push(net.on('profile', onProfile));
+  setTimeout(onProfile, 600);
 
   return {
     el: root,

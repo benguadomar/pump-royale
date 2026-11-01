@@ -3,6 +3,7 @@ import { CARD_BY_ID } from '../src/data/cards.js';
 import {
   newProfile, refreshQuests, applyMatch, grant, rollChest, upgradeCost, towerLevel, kingLevel,
   CHESTS, gemsToOpen, MAX_CARD_LEVEL, TROPHY_ROAD, PASS_TIERS, passReward, passTier, START_LEVEL,
+  DAILY_REWARDS, dailyStatus, dayKey, leaderboardReward,
 } from '../src/data/economy.js';
 import { ReplayDriver } from '../src/sim/replay.js';
 import { randomDeck, rng } from '../src/sim/sim.js';
@@ -241,6 +242,36 @@ export class Economy {
     const reward = grant(p, q.reward);
     this.save(id, p);
     return { profile: p, reward };
+  }
+
+  /** Daily login reward: once per UTC day, the streak decides which of the 7 rewards it is. */
+  claimDaily(id) {
+    const p = this.profile(id);
+    const status = dailyStatus(p);
+    if (!status.claimable) return { error: 'claimed' };
+    p.daily = { day: dayKey(), streak: status.streak + 1 };
+    const reward = grant(p, DAILY_REWARDS[status.day - 1]);
+    this.save(id, p);
+    return { profile: p, reward, day: status.day };
+  }
+
+  /** Credits a top-10 finish straight away and leaves a notice the player sees on next login. */
+  payLeaderboard(id, rank, day) {
+    const reward = leaderboardReward(rank);
+    if (!reward) return null;
+    const p = this.profile(id);
+    grant(p, reward);
+    p.notices = [...(p.notices ?? []), { kind: 'leaderboard', rank, day, reward }].slice(-5);
+    this.save(id, p);
+    return p;
+  }
+
+  ackNotices(id) {
+    const p = this.profile(id);
+    if (!p.notices?.length) return { profile: p };
+    p.notices = [];
+    this.save(id, p);
+    return { profile: p };
   }
 
   claimPass(id, tier) {

@@ -92,6 +92,37 @@ export const QUEST_KINDS = [
 ];
 export const QUESTS_PER_DAY = 3;
 export const dayKey = (now = Date.now()) => new Date(now).toISOString().slice(0, 10);
+const DAY_MS = 24 * 3600 * 1000;
+
+// ------------------------------------------------------------------ daily login reward
+
+/**
+ * A 7-day login calendar (about one day of quests each, rising to a chest on day 7).
+ * Missing a day restarts the streak at day 1; after day 7 it loops.
+ */
+export const DAILY_REWARDS = [{ gold: 60 }, { gems: 5 }, { gold: 120 }, { chest: 'silver' }, { gold: 200 }, { gems: 15 }, { chest: 'gold' }];
+
+/** { claimable, day: 1..7 of the next claim, streak: days claimed in a row so far }. */
+export function dailyStatus(p, now = Date.now()) {
+  const d = p.daily ?? { day: null, streak: 0 };
+  const today = dayKey(now);
+  if (d.day === today) return { claimable: false, day: ((d.streak - 1) % DAILY_REWARDS.length) + 1, streak: d.streak };
+  const continues = d.day === dayKey(now - DAY_MS);
+  const streak = continues ? d.streak : 0;
+  return { claimable: true, day: (streak % DAILY_REWARDS.length) + 1, streak };
+}
+
+// ------------------------------------------------------------------ leaderboard
+
+export const LEADERBOARD_SIZE = 100;
+/** Paid every day at 00:00 UTC to the top 10 of the trophy board. */
+export function leaderboardReward(rank) {
+  if (rank === 1) return { gems: 50, gold: 800 };
+  if (rank === 2) return { gems: 40, gold: 600 };
+  if (rank === 3) return { gems: 30, gold: 450 };
+  if (rank <= 10) return { gems: 15, gold: 200 };
+  return null;
+}
 
 export const PASS_TIERS = 30;
 export const PASS_XP_PER_TIER = 100;

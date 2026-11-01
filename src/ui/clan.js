@@ -1,12 +1,11 @@
 import { h, img } from './dom.js';
 import { openModal } from './modal.js';
-import { toastMsg } from './widgets.js';
+import { toastMsg, BADGE_COLORS, rankTag } from './widgets.js';
 import { fmtSecs } from './progress.js';
 import { net } from '../net.js';
 import { sfx } from '../audio.js';
 import { CARDS, CARD_BY_ID, cardImg } from '../data/cards.js';
 
-export const BADGE_COLORS = ['#e8b021', '#3c8ce8', '#d8443a', '#3cbc5a', '#9b5ae0', '#2ec4c4', '#ee7a2e', '#6f7f95'];
 const REQUESTABLE = new Set(['Common', 'Rare', 'Epic']);
 const ERRORS = { 'in-clan': 'Leave your clan first', name: 'Clan names need 3+ characters', taken: 'That name is taken', gold: 'Creating a clan costs 100 gold', full: 'That clan is full', cooldown: 'You can request again later', shards: "You don't have a spare copy", limit: 'Donation limit reached for this request', own: "That's your own request" };
 
@@ -101,7 +100,7 @@ export function openClan() {
       'div',
       { class: 'clan-members scroll' },
       c.members.map((m, i) =>
-        h('div', { class: `member-row${m.me ? ' me' : ''}` }, h('span', { class: 'dim' }, i + 1), h('span', { class: `dot ${m.online ? 'on' : ''}` }), h('b', {}, m.name), m.role === 'leader' && h('small', { class: 'leader' }, 'Leader'), h('span', { class: 'member-troph' }, img('/assets/ui/icon-trophy.png'), m.trophies), h('small', { class: 'dim', title: 'Cards donated' }, `🎁 ${m.donated}`)),
+        h('div', { class: `member-row${m.me ? ' me' : ''}` }, h('span', { class: 'dim' }, i + 1), h('span', { class: `dot ${m.online ? 'on' : ''}` }), h('b', {}, m.name), rankTag(m.name), m.role === 'leader' && h('small', { class: 'leader' }, 'Leader'), h('span', { class: 'member-troph' }, img('/assets/ui/icon-trophy.png'), m.trophies), h('small', { class: 'dim', title: 'Cards donated' }, `🎁 ${m.donated}`)),
       ),
     );
 

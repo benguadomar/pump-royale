@@ -8,6 +8,7 @@ import { Matchmaker } from './rooms.js';
 import { Economy } from './economy.js';
 import { Accounts } from './accounts.js';
 import { Clans } from './clans.js';
+import { Ranking } from './ranking.js';
 import { log, captureError, sentryEnabled } from './log.js';
 import { usernameKey, usernameError } from './auth.js';
 import * as firewall from './firewall.js';
@@ -21,6 +22,7 @@ const MAX_FEED_HISTORY = 12;
 const MAX_MSG_LEN = 160;
 const MAX_NAME_LEN = 16;
 const CHAT_COOLDOWN_MS = 700;
+const LEADERBOARD_THROTTLE_MS = 1500;
 const MAX_BODY = 8 * 1024;
 /** Per-connection token bucket: sustained 30 msg/s, bursts of 60; persistent flooding disconnects. */
 const BUCKET_SIZE = 60;
@@ -194,8 +196,20 @@ function pushFeed(item) {
   if (feedHistory.length > MAX_FEED_HISTORY) feedHistory.shift();
   broadcast({ t: 'feed', item: entry });
 }
-const leaderboard = () => ({ ...store.leaderboard(), clans: clans.leaderboard() });
-const broadcastLeaderboard = () => broadcast({ t: 'leaderboard', ...leaderboard() });
+const ranking = new Ranking(store, economy, clans, {
+  onPaid: (id, profile) => sockets.get(id)?.forEach((ws) => send(ws, { t: 'profile', profile })),
+});
+ranking.start();
+const leaderboard = () => ({ ...store.leaderboard(), trophies: ranking.board(), clans: clans.leaderboard() });
+// Boards are 100 rows each: coalesce bursts of match results into one broadcast.
+let leaderboardTimer = null;
+const broadcastLeaderboard = () => {
+  ranking.invalidate();
+  leaderboardTimer ??= setTimeout(() => {
+    leaderboardTimer = null;
+    broadcast({ t: 'leaderboard', ...leaderboard() });
+  }, LEADERBOARD_THROTTLE_MS);
+};
 
 const matchmaker = new Matchmaker({
   levelsFor: (id, deck) => economy.levelsFor(economy.profile(id), deck),
@@ -297,7 +311,8 @@ function handle(ws, msg) {
       const now = Date.now();
       if (!text || now - ws.lastChat < CHAT_COOLDOWN_MS) return;
       ws.lastChat = now;
-      const entry = { name: player.name, country: player.country, text, ts: now };
+      const clan = clans.clanOf(id);
+      const entry = { name: player.name, country: player.country, text, ts: now, clan: clan ? { name: clan.name, tag: clan.tag, badge: clan.badge } : undefined };
       store.addChat(entry);
       broadcast({ t: 'chat', msg: entry });
       return;
@@ -335,6 +350,14 @@ function handle(ws, msg) {
       return reply(ws, msg.t, economy.chestOpen(id, Number(msg.slot) | 0, Boolean(msg.gems)));
     case 'upgrade':
       return reply(ws, msg.t, economy.upgrade(id, String(msg.card ?? '')));
+    case 'daily-claim': {
+      const out = economy.claimDaily(id);
+      reply(ws, msg.t, out);
+      if (!out.error) broadcastLeaderboard();
+      return;
+    }
+    case 'notice-ack':
+      return reply(ws, msg.t, economy.ackNotices(id));
     case 'quest-claim':
       return reply(ws, msg.t, economy.claimQuest(id, Number(msg.i) | 0));
     case 'pass-claim':

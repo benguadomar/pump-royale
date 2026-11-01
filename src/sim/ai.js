@@ -1,4 +1,4 @@
-import { CARD_BY_ID } from '../data/cards.js';
+import { CARD_BY_ID, TOWER_SPELL_FACTOR, isSpell } from '../data/cards.js';
 import { ARENA_H, ARENA_W, RIVER_Y, BRIDGES_X, ELIXIR_PER_SEC, MAX_ELIXIR } from './constants.js';
 import { aiDifficulty } from './aiDifficulty.js';
 import { rng } from './sim.js';
@@ -12,6 +12,8 @@ const COMBOS = {
 const SUPPORT = new Set(['wizard', 'archer', 'bomber', 'goblin', 'skeleton', 'barbarian']);
 const TANK_COUNTERS = new Set(['pekka', 'barbarian', 'cannon', 'goblin', 'skeleton']);
 const RANGED = new Set(['wizard', 'archer', 'bomber']);
+/** Enemy hitpoints a spell must remove per elixir it costs to be worth casting. */
+const SPELL_VALUE_PER_ELIXIR = 230;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const laneOf = (x) => (x < ARENA_W / 2 ? 0 : 1);
 const laneX = (lane) => BRIDGES_X[lane];
@@ -64,6 +66,7 @@ export class BattleAI {
     if (this.sim.tick < this.nextThinkTick) return;
     this.nextThinkTick = this.sim.tick + this.profile.thinkTicks + this.jitter();
 
+    if (this.castSpell()) return;
     // Emergency defense always interrupts an offensive combo.
     if (this.defend()) return;
     if (this.followUp()) return;
@@ -81,9 +84,42 @@ export class BattleAI {
     this.enemyElixir = clamp(this.enemyElixir + rate * dt - spent, 0, MAX_ELIXIR);
   }
 
-  /** Affordable cards in hand, in stable hand order. */
-  hand() {
-    return this.side.hand.map((id, i) => ({ i, card: CARD_BY_ID[id] })).filter(({ card }) => card.cost <= this.side.elixir);
+  /** Affordable troops/buildings (or spells) in hand, in stable hand order. */
+  hand(spells = false) {
+    return this.side.hand.map((id, i) => ({ i, card: CARD_BY_ID[id] })).filter(({ card }) => card.cost <= this.side.elixir && isSpell(card) === spells);
+  }
+
+  /** Where an area spell removes the most enemy hitpoints, and how much. */
+  bestSpellSpot(card) {
+    const sp = card.spell;
+    const enemies = this.sim.entities.filter((e) => !e.dead && !e.hidden && e.team !== this.team);
+    let best = null;
+    for (const c of enemies) {
+      if (c.kind === 'tower') continue;
+      let value = 0;
+      for (const o of enemies) {
+        if (Math.hypot(o.x - c.x, o.y - c.y) > sp.radius + o.radius - 0.3) continue;
+        value += Math.min(o.hp, sp.damage * (o.kind === 'tower' ? TOWER_SPELL_FACTOR : 1));
+      }
+      if (!best || value > best.value) best = { x: c.x, y: c.y, value };
+    }
+    return best;
+  }
+
+  /** Spells only for clear value (a cluster worth more hp than their cost), or to finish a tower. */
+  castSpell() {
+    for (const choice of this.hand(true)) {
+      const sp = choice.card.spell;
+      const spot = this.bestSpellSpot(choice.card);
+      // Fire Arrows hits late: lead moving troops a little toward our side.
+      const lead = sp.delay ? (this.team === 0 ? 0.8 : -0.8) : 0;
+      if (spot && spot.value >= SPELL_VALUE_PER_ELIXIR * choice.card.cost && this.side.elixir - choice.card.cost >= 1) {
+        return this.sim.playCard(this.team, choice.i, spot.x, clamp(spot.y + lead, 0.5, ARENA_H - 0.5)) === null;
+      }
+      const tower = this.sim.entities.find((e) => e.kind === 'tower' && !e.dead && e.team !== this.team && e.hp < sp.damage * TOWER_SPELL_FACTOR);
+      if (tower) return this.sim.playCard(this.team, choice.i, tower.x, tower.y) === null;
+    }
+    return false;
   }
 
   tryPlay(choice, x, y) {

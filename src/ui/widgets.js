@@ -2,8 +2,33 @@ import { h, img, icon } from './dom.js';
 import { net } from '../net.js';
 import { state, save } from '../state.js';
 import { sfx, applyVolume } from '../audio.js';
+import { openModal } from './modal.js';
+import { leaderboardReward, LEADERBOARD_SIZE } from '../data/economy.js';
 
 export const CONTRACT_ADDRESS = 'SOON_0000';
+export const BADGE_COLORS = ['#e8b021', '#3c8ce8', '#d8443a', '#3cbc5a', '#9b5ae0', '#2ec4c4', '#ee7a2e', '#6f7f95'];
+
+/** Ladder title beside a name: "#12" for the trophy top 100 (gold for the top 10). */
+export function rankTag(name) {
+  const r = net.rankOf(name);
+  if (!r) return null;
+  return h('span', { class: `rank-tag${r <= 3 ? ' top3' : r <= 10 ? ' top10' : ''}`, title: `#${r} on the trophy ladder` }, `#${r}`);
+}
+
+/** A player's clan (guild): its badge colour and name. */
+export function clanTag(clan) {
+  if (!clan) return null;
+  return h('span', { class: 'clan-tag', title: `Clan #${clan.tag}` }, h('span', { class: 'clan-dot', style: { background: BADGE_COLORS[clan.badge % BADGE_COLORS.length] } }), clan.name);
+}
+
+/** Clan of anyone on the trophy board, by (unique) username. */
+export const clanOf = (name) => net.leaderboard.trophies?.find((r) => r.name === name)?.clan ?? null;
+
+/** Seconds until the next 00:00 UTC (ladder payout and daily reset). */
+export function secondsToUtcMidnight(now = Date.now()) {
+  const d = new Date(now);
+  return Math.ceil((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1) - now) / 1000);
+}
 
 /** Small country flag (or nothing when the country is unknown). */
 export function flag(country) {
@@ -145,34 +170,48 @@ export function fullscreenButton() {
  * Live leaderboard panel. `tabs` picks which boards are offered; the compact battle
  * version shows only the PvP wins board with streaks.
  */
-export function leaderboardPanel({ tabs = ['towers', 'cards', 'wins'], compact = false } = {}) {
+export function leaderboardPanel({ tabs = ['trophies', 'towers', 'cards', 'wins'], compact = false } = {}) {
   let tab = tabs.includes('wins') && compact ? 'wins' : tabs[0];
-  const ICON = { towers: '/assets/ui/icon-crown.png', cards: '/assets/ui/icon-cards.png', wins: '/assets/ui/icon-trophy.png' };
+  const ICON = { trophies: '/assets/ui/icon-trophy.png', towers: '/assets/ui/icon-crown.png', cards: '/assets/ui/icon-cards.png', wins: '/assets/ui/icon-trophy.png' };
+  const LABEL = { trophies: 'TOP 100', towers: 'TOWERS', cards: 'CARDS', wins: 'WINS' };
+  const footer = h('div', { class: 'lb-foot' });
+  const renderFooter = () => {
+    if (tab !== 'trophies') return footer.replaceChildren();
+    const mine = net.rankOf(state.name);
+    const s = secondsToUtcMidnight();
+    footer.replaceChildren(
+      h('span', {}, mine ? h('b', {}, `You: #${mine}`) : h('span', { class: 'dim' }, 'You: not in the top 100')),
+      h('button', { class: 'lb-rewards', title: 'Daily top 10 rewards', onclick: (e) => (e.stopPropagation(), sfx.click(), openLadderRewards()) }, `🎁 Top 10 paid in ${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`),
+    );
+  };
+  const footTimer = setInterval(renderFooter, 30_000);
   const body = h('tbody', {});
   const head = h('tr', {});
   const buttons = {};
   const tabRow = h(
     'div',
     { class: 'lb-tabs' },
-    tabs.map((t) => (buttons[t] = h('button', { class: 'btn', onclick: () => setTab(t) }, img(ICON[t]), t.toUpperCase()))),
+    tabs.map((t) => (buttons[t] = h('button', { class: 'btn', title: t === 'trophies' ? 'Top 100 by trophies' : t, onclick: () => setTab(t) }, img(ICON[t]), t === 'trophies' ? 'TOP' : LABEL[t]))),
   );
-  tabRow.style.gridTemplateColumns = `repeat(${tabs.length}, 1fr)`;
+  tabRow.style.gridTemplateColumns = `repeat(${Math.min(tabs.length, 2)}, minmax(0, 1fr))`;
 
   const render = () => {
     const wins = tab === 'wins';
-    head.replaceChildren(...[h('th', {}, '#'), h('th', {}, 'PLAYER'), h('th', {}, wins ? 'WINS' : tab.toUpperCase()), wins && h('th', {}, 'STREAK')].filter(Boolean));
+    const ladder = tab === 'trophies';
+    head.replaceChildren(...[h('th', {}, '#'), h('th', {}, ladder ? 'PLAYER · CLAN' : 'PLAYER'), h('th', {}, wins ? 'WINS' : tab.toUpperCase()), wins && h('th', {}, 'STREAK')].filter(Boolean));
+    renderFooter();
     const rows = net.leaderboard[tab] ?? [];
     if (!rows.length) {
-      body.replaceChildren(h('tr', {}, h('td', { colSpan: 4, class: 'lb-empty' }, wins ? 'Win a 1v1 to get on the board!' : 'No entries yet — be the first!')));
+      body.replaceChildren(h('tr', {}, h('td', { colSpan: 4, class: 'lb-empty' }, wins ? 'Win a 1v1 to get on the board!' : ladder ? 'Win trophies to climb the ladder!' : 'No entries yet — be the first!')));
       return;
     }
     body.replaceChildren(
       ...rows.map((r, i) =>
         h(
           'tr',
-          { class: r.name === state.name ? 'me' : '' },
-          h('td', {}, i + 1),
-          h('td', { class: 'name' }, flag(r.country), r.name),
+          { class: `${r.name === state.name ? 'me' : ''}${ladder && i < 3 ? ` podium p${i + 1}` : ''}` },
+          h('td', { class: ladder && i < 10 ? 'paid' : '' }, ladder && i < 10 ? h('span', { title: 'Paid daily at 00:00 UTC' }, i + 1) : i + 1),
+          h('td', { class: 'name' }, h('div', { class: 'lb-name' }, flag(r.country), h('span', {}, r.name)), ladder && r.clan && h('div', { class: 'lb-clan' }, clanTag(r.clan))),
           h('td', {}, !wins && img(ICON[tab]), r.value),
           wins && h('td', { class: 'streak' }, `${r.streak ?? 0} 🔥`),
         ),
@@ -191,10 +230,25 @@ export function leaderboardPanel({ tabs = ['towers', 'cards', 'wins'], compact =
   const el = h(
     'div',
     { class: `leaderboard wood panel${compact ? ' compact' : ''}` },
-    h('div', { class: 'lb-head title' }, img('/assets/ui/icon-trophy.png'), 'LEADERBOARD', h('span', { class: 'live' }, compact ? 'TOP 10' : 'LIVE')),
+    h('div', { class: 'lb-head title' }, img('/assets/ui/icon-trophy.png'), 'LEADERBOARD', h('span', { class: 'live' }, compact ? 'TOP 100' : 'LIVE')),
     tabs.length > 1 && tabRow,
-    h('table', { class: 'lb-table' }, h('thead', {}, head), body),
+    h('div', { class: 'lb-scroll' }, h('table', { class: 'lb-table' }, h('thead', {}, head), body)),
+    footer,
   );
-  el.destroy = off;
+  el.destroy = () => (off(), clearInterval(footTimer));
   return el;
+}
+
+/** What the trophy ladder's top 10 earn every day. */
+export function openLadderRewards() {
+  const rows = [[1, '🥇'], [2, '🥈'], [3, '🥉'], [4, '#4 – #10']].map(([rank, label]) => {
+    const r = leaderboardReward(rank);
+    return h('div', { class: 'ladder-reward inset' }, h('b', {}, label), h('span', {}, img('/assets/ui/gem.png', 'icon'), r.gems), h('span', {}, img('/assets/ui/coin.png', 'icon'), r.gold));
+  });
+  openModal({
+    cls: 'ladder-modal',
+    title: 'DAILY LADDER REWARDS',
+    iconSrc: '/assets/ui/icon-trophy.png',
+    body: [h('p', { class: 'dim' }, `The top 10 of the trophy ladder are paid every day at 00:00 UTC. Everyone in the top ${LEADERBOARD_SIZE} wears their rank (#1 … #${LEADERBOARD_SIZE}) beside their name.`), ...rows],
+  });
 }

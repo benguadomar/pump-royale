@@ -1,6 +1,31 @@
 import * as THREE from 'three/webgpu';
 import { buildUnit } from './models.js';
-import { CARDS, HAS_PNG, GENERATED_ART } from '../data/cards.js';
+import { loadSpellModels, makeBarrel, makeArrow, spellModelsReady } from './spells.js';
+import { CARDS, HAS_PNG, GENERATED_ART, isSpell } from '../data/cards.js';
+
+/** Spell cards show their model: a tilted powder barrel, or a fan of flaming arrows. */
+function spellPortrait(id) {
+  if (!spellModelsReady()) return null;
+  const root = new THREE.Group();
+  if (id === 'barrel-bomb') {
+    const b = makeBarrel();
+    b.rotation.set(0.25, 0.6, -0.35);
+    root.add(b);
+    // A lit fuse on top.
+    const glow = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffc65a }));
+    glow.position.set(0.1, 0.62, 0);
+    root.add(glow);
+  } else {
+    for (let i = 0; i < 5; i++) {
+      const a = makeArrow();
+      // Tips down, fanned out like a volley.
+      a.rotation.set(Math.PI / 2 - 0.35 + i * 0.04, 0, (i - 2) * 0.22);
+      a.position.set((i - 2) * 0.22, Math.abs(i - 2) * -0.05, 0);
+      root.add(a);
+    }
+  }
+  return { root };
+}
 
 // WebGPU pads read-back rows to 256 bytes, so the width must be a multiple of 64 pixels.
 const W = 256;
@@ -44,9 +69,11 @@ export async function generateCardArt(engine) {
   const center = new THREE.Vector3();
 
   try {
+    await loadSpellModels().catch((e) => console.warn('spell models', e));
     for (const card of CARDS) {
       if (HAS_PNG.has(card.id) || GENERATED_ART.has(card.id)) continue;
-      const model = buildUnit(card.id, 0);
+      const model = isSpell(card) ? spellPortrait(card.id) : buildUnit(card.id, 0);
+      if (!model) continue;
       model.root.rotation.y = -0.45;
       model.root.updateMatrixWorld(true);
       scene.add(model.root);

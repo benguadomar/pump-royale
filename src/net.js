@@ -13,7 +13,13 @@ export const net = {
   online: 0,
   chat: [],
   feed: [],
-  leaderboard: { towers: [], cards: [], wins: [] },
+  leaderboard: { towers: [], cards: [], wins: [], trophies: [] },
+
+  /** Ladder title: a player's place (1–100) on the trophy board, or null. Usernames are unique. */
+  rankOf(name) {
+    const i = this.leaderboard.trophies?.findIndex((r) => r.name === name) ?? -1;
+    return i < 0 ? null : i + 1;
+  },
   /** Server-owned progression (trophies, currencies, cards, chests...). Read-only here. */
   profile: null,
   /** { id, username, guest } once the server accepted our session; guests must log in to play. */
@@ -120,7 +126,7 @@ function connect() {
         net.online = msg.online;
         net.chat = msg.chat;
         net.feed = msg.feed;
-        net.leaderboard = { wins: [], clans: [], ...msg.leaderboard };
+        net.leaderboard = { wins: [], trophies: [], clans: [], ...msg.leaderboard };
         emit('welcome');
         emit('status');
         emit('leaderboard');
@@ -140,7 +146,7 @@ function connect() {
         emit('feed', msg.item);
         break;
       case 'leaderboard':
-        net.leaderboard = { towers: msg.towers, cards: msg.cards, wins: msg.wins ?? [], clans: msg.clans ?? [] };
+        net.leaderboard = { towers: msg.towers, cards: msg.cards, wins: msg.wins ?? [], trophies: msg.trophies ?? [], clans: msg.clans ?? [] };
         emit('leaderboard');
         break;
       default:

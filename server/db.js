@@ -7,6 +7,7 @@ import { log } from './log.js';
 import { usernameKey } from './auth.js';
 import { CARD_BY_ID } from '../src/data/cards.js';
 import { SIM_VERSION } from '../src/sim/constants.js';
+import { LEADERBOARD_SIZE } from '../src/data/economy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, 'data');
@@ -18,7 +19,6 @@ const DOCS_FILE = path.join(DATA_DIR, 'docs.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const PUBLIC_REPLAYS = 30;
 const REPLAYS_PER_PLAYER = 20;
-const LEADERBOARD_SIZE = 10;
 const CHAT_HISTORY = 50;
 
 const SCHEMA = `

@@ -572,6 +572,227 @@ button {
   vertical-align: -2px;
   margin-right: 4px;
 }
+.lb-scroll {
+  max-height: 232px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.45) transparent;
+}
+.lb-table thead th {
+  position: sticky;
+  top: 0;
+  background: #6f421e;
+  z-index: 1;
+}
+.lb-name {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lb-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lb-clan {
+  margin-top: 1px;
+  font-size: 10.5px;
+}
+.lb-table td.paid {
+  color: var(--gold-1);
+  font-weight: 900;
+}
+.lb-table tr.podium.p1 td:first-child::before {
+  content: '🥇';
+}
+.lb-table tr.podium.p2 td:first-child::before {
+  content: '🥈';
+}
+.lb-table tr.podium.p3 td:first-child::before {
+  content: '🥉';
+}
+.lb-table tr.podium td:first-child span {
+  display: none;
+}
+.lb-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11.5px;
+}
+.lb-foot:empty {
+  display: none;
+}
+.lb-rewards {
+  padding: 3px 7px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  color: #ffe9a8;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(243, 193, 74, 0.5);
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.lb-rewards:hover {
+  border-color: var(--gold-1);
+}
+
+/* ladder titles (#1 … #100) and clan tags beside names */
+.rank-tag {
+  display: inline-block;
+  margin: 0 4px 0 0;
+  padding: 0 4px;
+  font-family: var(--font-body);
+  font-size: 0.78em;
+  font-weight: 900;
+  line-height: 1.45;
+  color: #e9eef5;
+  background: linear-gradient(180deg, #7c8a9c, #4f5b6b);
+  border-radius: 5px;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  vertical-align: 1px;
+}
+.rank-tag.top10 {
+  color: #fff;
+  background: linear-gradient(180deg, #f5b340, #c27512);
+}
+.rank-tag.top3 {
+  color: #fff;
+  background: linear-gradient(180deg, #ff7aa8, #c22c66);
+  box-shadow: 0 0 6px rgba(255, 120, 170, 0.6);
+}
+.clan-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 4px;
+  font-size: 0.85em;
+  font-weight: 700;
+  color: #ffe3a8;
+  opacity: 0.9;
+  white-space: nowrap;
+}
+.lb-clan .clan-tag {
+  margin-left: 0;
+}
+.clan-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+}
+.profile-name .rank-tag {
+  font-size: 0.6em;
+}
+
+/* daily reward + ladder reward modals */
+.notify-dot {
+  display: none;
+}
+.side-btn.notify {
+  position: relative;
+}
+.side-btn.notify .notify-dot {
+  display: block;
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #ff3b30;
+  border: 2px solid #fff3d6;
+  animation: hint-pulse 1.2s infinite;
+}
+.daily-modal {
+  width: 640px;
+}
+.daily-body p {
+  margin: 0 0 12px;
+}
+.daily-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+}
+.daily-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 4px;
+  text-align: center;
+  font-size: 13px;
+}
+.daily-tile small {
+  font-family: var(--font-title);
+  color: var(--gold-1);
+  letter-spacing: 0.5px;
+}
+.daily-tile:last-child {
+  background: rgba(243, 193, 74, 0.18);
+}
+.daily-icon {
+  height: 34px;
+}
+.daily-chest {
+  font-size: 30px;
+  line-height: 34px;
+}
+.daily-tile.done {
+  opacity: 0.55;
+}
+.daily-tick {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  color: #7fe07a;
+  font-weight: 900;
+}
+.daily-tile.today {
+  border: 2px solid var(--gold-1);
+  box-shadow: 0 0 14px rgba(243, 193, 74, 0.55);
+  animation: chest-ready 1s ease-in-out infinite;
+}
+.daily-claim {
+  display: flex;
+  margin: 16px auto 0;
+  height: 50px;
+  padding: 0 34px;
+  font-size: 22px;
+}
+.daily-next {
+  margin-top: 14px;
+  text-align: center;
+  font-weight: 800;
+}
+.ladder-modal {
+  width: 420px;
+}
+.ladder-modal p {
+  margin: 0 0 12px;
+}
+.ladder-reward {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  font-weight: 800;
+}
+.ladder-reward .icon {
+  height: 20px;
+  vertical-align: -4px;
+  margin-right: 4px;
+}
+
 .lb-empty {
   padding: 14px 4px;
   text-align: center;
@@ -1933,13 +2154,20 @@ button {
 .leaderboard {
   width: 290px;
 }
+.lb-tabs {
+  gap: 6px;
+}
 .lb-tabs .btn {
-  font-size: 12px;
-  padding: 0 4px;
-  gap: 4px;
+  height: 32px;
+  min-width: 0;
+  font-size: 13px;
+  padding: 0 6px;
+  gap: 5px;
+  white-space: nowrap;
+  overflow: hidden;
 }
 .lb-tabs .btn img {
-  height: 18px;
+  height: 20px;
 }
 
 /* ---------------------------------------------------------------- arenas */

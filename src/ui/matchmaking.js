@@ -1,5 +1,5 @@
 import { h, img, app } from './dom.js';
-import { flag, toastMsg } from './widgets.js';
+import { flag, toastMsg, rankTag } from './widgets.js';
 import { openModal, closeModal } from './modal.js';
 import { net } from '../net.js';
 import { state } from '../state.js';
@@ -171,9 +171,9 @@ export function showVersus(match) {
     const box = h(
       'div',
       { class: 'versus' },
-      h('div', { class: 'vs-side blue' }, flag(state.country), h('span', {}, state.name)),
+      h('div', { class: 'vs-side blue' }, flag(state.country), rankTag(state.name), h('span', {}, state.name)),
       h('div', { class: 'vs-mid title' }, match.mode === 'friendly' ? 'FRIENDLY' : 'VS'),
-      h('div', { class: 'vs-side red' }, flag(match.opp.country), h('span', {}, match.opp.name)),
+      h('div', { class: 'vs-side red' }, flag(match.opp.country), rankTag(match.opp.name), h('span', {}, match.opp.name)),
     );
     app().append(box);
     sfx.horn();

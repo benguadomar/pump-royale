@@ -6,9 +6,10 @@ import { net } from '../net.js';
 import { CARD_BY_ID, cardImg } from '../data/cards.js';
 import { kingLevel, towerLevel, XP_LEVELS, leagueFor } from '../data/economy.js';
 import { accountSection } from './account.js';
+import { rankTag, clanTag } from './widgets.js';
 
 export function openProfile({ onReplay } = {}) {
-  const nameRow = h('div', { class: 'profile-name' }, state.name);
+  const nameRow = h('div', { class: 'profile-name' }, rankTag(state.name), state.name, clanTag(net.clan));
   const note = h('div', { class: 'profile-note' }, 'Your unique username');
 
   // Server profile when connected (verified results); local stats as an offline fallback.

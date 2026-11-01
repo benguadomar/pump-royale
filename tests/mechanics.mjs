@@ -17,8 +17,76 @@ const run = (sim, seconds) => {
   for (let t = 0; t < seconds; t += 1 / 30) sim.step(1 / 30);
 };
 
-// Only the original ten cards exist: troops and one building, no spells or flyers.
-check('roster is the original 10 cards', CARDS.length === 10 && CARDS.every((c) => c.type !== 'Spell' && !c.air), CARDS.map((c) => c.id).join(','));
+// The original ten troops/buildings plus the three spells; no flyers.
+check('roster is the 10 original cards + 3 spells', CARDS.length === 13 && CARDS.filter((c) => c.type === 'Spell').length === 3 && CARDS.every((c) => !c.air), CARDS.map((c) => c.id).join(','));
+
+/** Puts `cardId` in team 0's hand with full elixir and casts it at (x, y). */
+const cast = (sim, cardId, x, y) => {
+  sim.sides[0].hand[0] = cardId;
+  sim.sides[0].elixir = 10;
+  return sim.playCard(0, 0, x, y);
+};
+// Barrel Bomb: flies from the King Tower, then blasts and knocks back.
+{
+  const sim = fresh();
+  const near = unit(sim, 'archer', 1, 9, 20);
+  const tank = unit(sim, 'giant', 1, 10, 20);
+  [near, tank].forEach((u) => (u.speed = 0));
+  check('spells may land in the enemy half', cast(sim, 'barrel-bomb', 9.5, 20) === null);
+  check('barrel is still in the air right after the throw', near.hp === near.maxHp);
+  run(sim, 2.2);
+  check('barrel bomb kills an archer', near.dead, `hp ${Math.round(near.hp)}`);
+  check('barrel bomb damages a giant', tank.hp < tank.maxHp && !tank.dead, `${Math.round(tank.maxHp - tank.hp)} dmg`);
+}
+{
+  const sim = fresh();
+  const sk = unit(sim, 'barbarian', 1, 9.6, 20);
+  const gi = unit(sim, 'giant', 1, 8.4, 20);
+  sim.sides[0].hand[0] = 'barrel-bomb';
+  sim.sides[0].elixir = 10;
+  sim.playCard(0, 0, 9, 20);
+  const s = sim.spells[0];
+  s.t = s.flight;
+  sim.updateSpells(0);
+  check('blast pushes light troops harder than tanks (Δv = J / m)', Math.abs(sk.vx) > Math.abs(gi.vx) * 3 && sk.vx > 0 && gi.vx < 0, `${sk.vx.toFixed(2)} vs ${gi.vx.toFixed(2)}`);
+}
+// Fire Arrows: three volleys, each a third of the damage; towers take the reduced share.
+{
+  const sim = fresh();
+  const w = unit(sim, 'wizard', 1, 9, 20);
+  w.speed = 0;
+  w.damage = 0;
+  cast(sim, 'fire-arrows', 9, 20);
+  const per = CARD_BY_ID['fire-arrows'].spell.damage / 3;
+  run(sim, 0.95);
+  check('first fire arrow volley lands after the sky delay', Math.abs(w.maxHp - w.hp - per) < 1, `${Math.round(w.maxHp - w.hp)}`);
+  run(sim, 1);
+  check('three volleys deal the full damage', Math.abs(w.maxHp - w.hp - per * 3) < 1, `${Math.round(w.maxHp - w.hp)}`);
+  const sim2 = fresh();
+  const tower = sim2.entities.find((e) => e.kind === 'tower' && e.team === 1 && e.towerKind === 'princess');
+  cast(sim2, 'fire-arrows', tower.x, tower.y);
+  run(sim2, 2);
+  check('crown towers take reduced spell damage', Math.abs(tower.maxHp - tower.hp - CARD_BY_ID['fire-arrows'].damage * 0.35) < 1, `${Math.round(tower.maxHp - tower.hp)}`);
+}
+// Fireball: flies from the King Tower, kills/damages everything inside its radius only.
+{
+  const sim = fresh();
+  const wiz = unit(sim, 'archer', 1, 9, 20);
+  const tank = unit(sim, 'giant', 1, 10.5, 20);
+  const far = unit(sim, 'archer', 1, 9 + CARD_BY_ID.fireball.spell.radius + 1.5, 20);
+  [wiz, tank, far].forEach((u) => ((u.speed = 0), (u.damage = 0)));
+  cast(sim, 'fireball', 9, 20);
+  check('fireball is still in the air right after the throw', wiz.hp === wiz.maxHp);
+  run(sim, 2.5);
+  check('fireball kills an archer', wiz.dead, `hp ${Math.round(wiz.hp)}`);
+  check('fireball damages a giant in the radius', Math.abs(tank.maxHp - tank.hp - CARD_BY_ID.fireball.damage) < 1, `${Math.round(tank.maxHp - tank.hp)} dmg`);
+  check('fireball misses troops outside its radius', far.hp === far.maxHp);
+  const sim2 = fresh();
+  const tower = sim2.entities.find((e) => e.kind === 'tower' && e.team === 1 && e.towerKind === 'princess');
+  cast(sim2, 'fireball', tower.x, tower.y);
+  run(sim2, 3);
+  check('fireball deals reduced damage to crown towers', Math.abs(tower.maxHp - tower.hp - CARD_BY_ID.fireball.damage * 0.35) < 1, `${Math.round(tower.maxHp - tower.hp)}`);
+}
 
 // Splash damage clears a skeleton cluster.
 {
