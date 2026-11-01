@@ -6,6 +6,7 @@ import {
 } from '../src/data/economy.js';
 import { ReplayDriver } from '../src/sim/replay.js';
 import { randomDeck, rng } from '../src/sim/sim.js';
+import { signResult } from './auth.js';
 
 const AI_MATCH_TTL_MS = 15 * 60 * 1000;
 const MAX_INPUTS = 800;
@@ -101,30 +102,53 @@ export class Economy {
     const p = this.profile(id);
     const summary = applyMatch(p, { result: r.result, myCrowns: r.myCrowns, deck: match.decks[0], deployed: r.myDeployed, oppTrophies: p.trophies });
     this.save(id, p);
-    await this.storeReplay(id, { record, result: r, opp: match.oppName, mode: 'ai' });
-    return { result: r, summary, profile: p };
+    const signed = { match: matchId, mode: 'ai', seed: match.seed, players: id, winner: sim.winner ?? -1, crowns: `${r.myCrowns}-${r.enemyCrowns}`, ticks: sim.tick };
+    signed.sig = signResult(signed);
+    await this.storeReplay(id, { record, result: r, opp: match.oppName, mode: 'ai', sig: signed.sig });
+    return { result: r, summary, profile: p, signed };
   }
 
   /** Online match finished on the server: both sides are scored against each other. */
   async pvpEnd(room) {
+    const ranked = room.mode !== 'friendly';
     const profiles = room.players.map((pl) => this.profile(pl.id));
+    const before = profiles.map((p) => p.trophies);
     const out = [];
     for (const team of [0, 1]) {
-      const r = room.sim.result(team);
       const p = profiles[team];
-      const oppTrophies = profiles[1 - team].trophies;
-      const summary = applyMatch(p, { result: r.result, myCrowns: r.myCrowns, deck: room.players[team].deck, deployed: r.myDeployed, oppTrophies });
+      if (!ranked) {
+        out.push({ summary: null, friendly: true, profile: p });
+        continue;
+      }
+      const r = room.sim.result(team);
+      const summary = applyMatch(p, { result: r.result, myCrowns: r.myCrowns, deck: room.players[team].deck, deployed: r.myDeployed, oppTrophies: before[1 - team] });
       this.save(room.players[team].id, p);
       out.push({ summary, profile: p });
     }
     const record = { mode: 'pvp', seed: room.sim.seed, decks: room.players.map((pl) => pl.deck), levels: room.levels, cardLevels: room.cardLevels, inputs: room.inputs };
+    const mode = ranked ? 'pvp' : 'friendly';
     for (const team of [0, 1]) {
-      await this.storeReplay(room.players[team].id, { record, result: room.sim.result(team), opp: room.players[1 - team].name, mode: 'pvp', team });
+      await this.storeReplay(room.players[team].id, { record, result: room.sim.result(team), opp: room.players[1 - team].name, mode, team, sig: room.signed?.sig });
+    }
+    if (ranked) {
+      const r = room.sim.result(0);
+      this.store.addPublicReplay({
+        id: crypto.randomUUID(),
+        ts: Date.now(),
+        mode,
+        team: 0,
+        players: room.players.map((pl, t) => ({ name: pl.name, country: pl.country, trophies: before[t] })),
+        crowns: [r.myCrowns, r.enemyCrowns],
+        winner: room.sim.winner ?? -1,
+        duration: Math.round(r.duration),
+        sig: room.signed?.sig,
+        record,
+      });
     }
     return out;
   }
 
-  async storeReplay(player, { record, result, opp, mode, team = 0 }) {
+  async storeReplay(player, { record, result, opp, mode, team = 0, sig }) {
     await this.store.saveReplay(player, {
       id: crypto.randomUUID(),
       ts: Date.now(),
@@ -134,6 +158,7 @@ export class Economy {
       result: result.result,
       crowns: [result.myCrowns, result.enemyCrowns],
       duration: Math.round(result.duration),
+      sig,
       record,
     });
   }

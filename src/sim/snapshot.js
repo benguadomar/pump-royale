@@ -69,6 +69,7 @@ export function encodeSnapshot(sim, team, events = []) {
   const me = sim.sides[team];
   const opp = sim.sides[1 - team];
   return {
+    tick: sim.tick,
     time: Math.round(sim.time * 100) / 100,
     overtime: sim.overtime,
     over: sim.over,
@@ -82,6 +83,7 @@ export function encodeSnapshot(sim, team, events = []) {
 /** Expands a snapshot into the plain view objects the renderer consumes. */
 export function decodeSnapshot(s) {
   return {
+    tick: s.tick,
     time: s.time,
     overtime: s.overtime,
     over: s.over,
@@ -111,4 +113,104 @@ export function decodeSnapshot(s) {
       charging: Boolean(f & F_CHARGING),
     })),
   };
+}
+
+// ------------------------------------------------------------------ delta streams
+
+const FIELDS = 10;
+const KEYFRAME_EVERY = 150; // snapshots (10 s at 15 Hz)
+const CHECKSUM_EVERY = 30; // snapshots (2 s)
+
+/** FNV-1a over every integer of the entity table, in order. */
+export function checksumEnts(ents) {
+  let h = 0x811c9dc5;
+  for (const row of ents) {
+    for (const v of row) {
+      h ^= v & 0xffff;
+      h = Math.imul(h, 0x01000193);
+      h ^= (v >>> 16) & 0xffff;
+      h = Math.imul(h, 0x01000193);
+    }
+  }
+  return h >>> 0;
+}
+
+/**
+ * Server side, one per recipient: turns full snapshots into deltas against the last one
+ * that recipient received. Rows that changed are sent as [id, mask, ...changed fields];
+ * removed ids go in `rm`. A keyframe (`k: 1`) carries the full table.
+ */
+export class SnapshotEncoder {
+  constructor() {
+    this.base = null;
+    this.count = 0;
+    this.forceKey = true;
+  }
+
+  encode(snap) {
+    const n = this.count++;
+    const key = this.forceKey || n % KEYFRAME_EVERY === 0;
+    const { ents, ...rest } = snap;
+    const msg = { ...rest };
+    if (key) {
+      this.forceKey = false;
+      msg.k = 1;
+      msg.ents = ents;
+    } else {
+      const d = [];
+      const seen = new Set();
+      for (const row of ents) {
+        seen.add(row[0]);
+        const prev = this.base.get(row[0]);
+        let mask = 0;
+        const vals = [];
+        for (let i = 1; i < FIELDS; i++) {
+          if (!prev || prev[i] !== row[i]) {
+            mask |= 1 << i;
+            vals.push(row[i]);
+          }
+        }
+        if (mask) d.push([row[0], mask, ...vals]);
+      }
+      const rm = [];
+      for (const id of this.base.keys()) if (!seen.has(id)) rm.push(id);
+      msg.d = d;
+      if (rm.length) msg.rm = rm;
+    }
+    if (n % CHECKSUM_EVERY === 0) msg.ck = checksumEnts(ents);
+    this.base = new Map(ents.map((row) => [row[0], row]));
+    return msg;
+  }
+}
+
+/**
+ * Client side: rebuilds the full entity table from keyframes + deltas. Returns the raw
+ * snapshot (with `ents`) or null while waiting for a keyframe; `desynced` is set when a
+ * checksum disagrees, so the caller can ask the server for a keyframe.
+ */
+export class SnapshotDecoder {
+  constructor() {
+    this.base = null;
+    this.desynced = false;
+  }
+
+  apply(msg) {
+    if (msg.k) this.base = new Map(msg.ents.map((row) => [row[0], row]));
+    else if (!this.base) return null;
+    else {
+      const next = new Map(this.base);
+      for (const id of msg.rm ?? []) next.delete(id);
+      for (const [id, mask, ...vals] of msg.d) {
+        const row = next.get(id)?.slice() ?? new Array(FIELDS).fill(0);
+        row[0] = id;
+        let j = 0;
+        for (let i = 1; i < FIELDS; i++) if (mask & (1 << i)) row[i] = vals[j++];
+        next.set(id, row);
+      }
+      this.base = next;
+    }
+    const ents = [...this.base.values()];
+    this.desynced = msg.ck != null && checksumEnts(ents) !== msg.ck;
+    return { ...msg, ents };
+  }
 }

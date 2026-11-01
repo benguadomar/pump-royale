@@ -287,6 +287,25 @@ export class BattleView {
     this.updateDebris(dt);
     this.updateBeams(dt);
     this.updateZones(dt);
+    this.updatePending(view.pending, t);
+  }
+
+  /** Predicted deploys (online): a pulsing ring where we tapped until the server's unit appears. */
+  updatePending(list = [], t) {
+    this.pendingRings ??= [];
+    while (this.pendingRings.length < list.length) {
+      const ring = new THREE.Mesh(this.geo.ring, new THREE.MeshBasicMaterial({ color: 0x7cc4ff, transparent: true, opacity: 0.9, depthWrite: false }));
+      this.group.add(ring);
+      this.pendingRings.push(ring);
+    }
+    this.pendingRings.forEach((ring, i) => {
+      const p = list[i];
+      ring.visible = Boolean(p);
+      if (!p) return;
+      ring.position.copy(tileToWorld(p.x, p.y));
+      ring.position.y = 0.1;
+      ring.scale.setScalar(0.9 + 0.25 * Math.sin(t * 12));
+    });
   }
 
   /** Stun stars, rage sparkles and the Prince's charge dust. */
@@ -995,6 +1014,7 @@ export class BattleView {
       }
     });
     this.preview?.ring.material.dispose();
+    this.pendingRings?.forEach((r) => r.material.dispose());
     this.numLayer.remove();
     Object.values(this.geo).forEach((g) => g.dispose());
     this.zoneTex.dispose();

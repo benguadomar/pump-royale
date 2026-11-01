@@ -1,6 +1,7 @@
 import { BattleSim, randomDeck } from '../sim/sim.js';
 import { BattleAI } from '../sim/ai.js';
-import { decodeSnapshot, encodeSnapshot, eventFor } from '../sim/snapshot.js';
+import { decodeSnapshot, encodeSnapshot, eventFor, SnapshotDecoder } from '../sim/snapshot.js';
+import { CARD_BY_ID } from '../data/cards.js';
 import { ELIXIR_PER_SEC, MAX_ELIXIR, SIM_DT } from '../sim/constants.js';
 import { ReplayDriver, roundPos } from '../sim/replay.js';
 import { EMOTE_COOLDOWN_MS } from '../data/emotes.js';
@@ -8,6 +9,9 @@ import { net } from '../net.js';
 
 const AI_NAMES = ['Sir Bot-a-Lot', 'Grumblebeard', 'Lady Elixira', 'Count Crumble', 'Old Tusk'];
 const INTERP_DELAY_MS = 110;
+const MIN_INTERP_MS = 70;
+const MAX_INTERP_MS = 300;
+const PREDICTION_TIMEOUT_MS = 2500;
 
 /**
  * Match vs. the AI: the full simulation runs in the browser. With a server `match`
@@ -95,31 +99,72 @@ export class LocalSession {
  * and predicts our own elixir between packets.
  */
 export class OnlineSession {
-  constructor({ room, oppName, oppFlag }) {
-    this.mode = 'online';
+  constructor({ room, oppName, oppFlag, matchMode = 'ranked', spectator = null }) {
+    this.mode = spectator ? 'spectate' : 'online';
+    this.matchMode = matchMode;
     this.room = room;
     this.oppName = oppName;
     this.oppFlag = oppFlag;
+    /** Spectators watch from player 0's side: { players: [{ name, country, trophies }] }. */
+    this.spectator = spectator;
     this.snaps = [];
     this.events = [];
     this.finalResult = null;
+    this.endMsg = null;
     this.onPlayError = null;
     this.onEmote = null;
+    this.decoder = new SnapshotDecoder();
+    this.lastResync = 0;
+    // Adaptive interpolation: mean packet gap + jitter, both smoothed.
+    this.gap = 1000 / 15;
+    this.jitter = 10;
+    this.lastRecv = 0;
+    this.interpDelay = INTERP_DELAY_MS;
+    /** Deploys we predicted locally, waiting for the server: { card, x, y, cost, sent, at }. */
+    this.predicted = [];
     this.offs = [
       net.on('emote', (m) => this.onEmote?.(m.id)),
       net.on('snap', (s) => this.onSnap(s)),
-      net.on('play-fail', (m) => this.onPlayError?.(m.reason)),
-      net.on('match-end', (m) => (this.finalResult = m.result)),
+      net.on('play-ack', (m) => {
+        const p = this.predicted.find((q) => q.card === m.card && q.at == null);
+        if (p) p.at = m.at;
+      }),
+      net.on('play-fail', (m) => {
+        this.predicted = this.predicted.filter((q) => q.card !== m.card);
+        this.onPlayError?.(m.reason);
+      }),
+      net.on('match-end', (m) => {
+        this.endMsg = m;
+        this.finalResult = m.result;
+      }),
     ];
   }
 
   onSnap(raw) {
-    const snap = decodeSnapshot(raw);
-    snap.recv = performance.now();
+    const full = this.decoder.apply(raw);
+    const now = performance.now();
+    if (!full || this.decoder.desynced) {
+      if (now - this.lastResync > 500) {
+        this.lastResync = now;
+        net.send({ t: 'resync' });
+      }
+      if (!full) return;
+    }
+    if (this.lastRecv) {
+      const gap = now - this.lastRecv;
+      this.gap += (gap - this.gap) * 0.1;
+      this.jitter += (Math.abs(gap - this.gap) - this.jitter) * 0.1;
+      this.interpDelay = Math.max(MIN_INTERP_MS, Math.min(MAX_INTERP_MS, this.gap + this.jitter * 2 + 20));
+    }
+    this.lastRecv = now;
+    const snap = decodeSnapshot(full);
+    snap.recv = now;
     snap.byId = new Map(snap.ents.map((e) => [e.id, e]));
     this.snaps.push(snap);
-    if (this.snaps.length > 8) this.snaps.shift();
+    if (this.snaps.length > 12) this.snaps.shift();
     this.events.push(...raw.ev);
+    // A prediction is settled once a snapshot from after its apply tick arrives.
+    this.predicted = this.predicted.filter((p) => (p.at == null || snap.tick < p.at) && now - p.sent < PREDICTION_TIMEOUT_MS);
   }
 
   update() {}
@@ -127,7 +172,7 @@ export class OnlineSession {
   view() {
     const latest = this.snaps.at(-1);
     if (!latest) return null;
-    const renderAt = performance.now() - INTERP_DELAY_MS;
+    const renderAt = performance.now() - this.interpDelay;
     let a = this.snaps[0];
     let b = latest;
     for (let i = 0; i < this.snaps.length - 1; i++) {
@@ -146,11 +191,13 @@ export class OnlineSession {
     });
     const since = (performance.now() - latest.recv) / 1000;
     const rate = ELIXIR_PER_SEC * (latest.doubleElixir ? 2 : 1);
+    const spent = this.predicted.reduce((s, p) => s + p.cost, 0);
     return {
       ...latest,
       ents,
       time: Math.max(0, latest.time - since),
-      me: { ...latest.me, elixir: Math.min(MAX_ELIXIR, latest.me.elixir + rate * since) },
+      me: { ...latest.me, elixir: Math.max(0, Math.min(MAX_ELIXIR, latest.me.elixir + rate * since) - spent) },
+      pending: this.predicted,
     };
   }
 
@@ -160,13 +207,21 @@ export class OnlineSession {
     return ev;
   }
 
+  /** Predicts the deploy locally (ring + elixir) and asks the server; it confirms or rolls back. */
   play(handIndex, x, y) {
-    const latest = this.snaps.at(-1);
-    net.send({ t: 'play', room: this.room, i: handIndex, card: latest?.me.hand[handIndex], x, y });
+    if (this.spectator) return 'spectate';
+    const v = this.view();
+    const card = CARD_BY_ID[v?.me.hand[handIndex]];
+    if (!card) return 'card';
+    if (this.predicted.some((p) => p.card === card.id)) return 'card';
+    if (v.me.elixir < card.cost) return 'elixir';
+    this.predicted.push({ card: card.id, x, y, cost: card.cost, sent: performance.now(), at: null });
+    net.send({ t: 'play', room: this.room, card: card.id, x, y });
     return null;
   }
 
   forfeit() {
+    if (this.spectator) return;
     net.send({ t: 'forfeit', room: this.room });
   }
 
@@ -180,6 +235,7 @@ export class OnlineSession {
 
   destroy() {
     this.offs.forEach((off) => off());
+    if (this.spectator && !this.finalResult) net.send({ t: 'spectate-leave' });
   }
 }
 

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ws from 'ws';
 import { Pool, neonConfig } from '@neondatabase/serverless';
+import { log } from './log.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, 'data');
@@ -10,6 +11,8 @@ const DB_FILE = path.join(DATA_DIR, 'players.json');
 const CHAT_FILE = path.join(DATA_DIR, 'chat.json');
 const PROFILE_FILE = path.join(DATA_DIR, 'profiles.json');
 const REPLAY_FILE = path.join(DATA_DIR, 'replays.json');
+const DOCS_FILE = path.join(DATA_DIR, 'docs.json');
+const PUBLIC_REPLAYS = 30;
 const REPLAYS_PER_PLAYER = 20;
 const LEADERBOARD_SIZE = 10;
 const CHAT_HISTORY = 50;
@@ -50,6 +53,14 @@ CREATE TABLE IF NOT EXISTS replays (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS replays_player_idx ON replays (player, created_at DESC);
+-- Small keyed documents: accounts, clans, the public replay list.
+CREATE TABLE IF NOT EXISTS docs (
+  kind       TEXT NOT NULL,
+  id         TEXT NOT NULL,
+  data       JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (kind, id)
+);
 `;
 
 const blank = (name, country) => ({ name, country, towers: 0, cards: 0, wins: 0, losses: 0, pvpWins: 0, pvpLosses: 0, streak: 0, bestStreak: 0 });
@@ -65,6 +76,7 @@ export class Store {
     this.chat = [];
     this.profiles = {};
     this.replays = {};
+    this.docs = { account: {}, clan: {}, tv: {} };
     const url = process.env.DATABASE_URL;
     if (url) {
       neonConfig.webSocketConstructor = ws;
@@ -89,6 +101,8 @@ export class Store {
       this.chat = chat.rows.reverse().map((r) => ({ ...r, ts: Number(r.ts) }));
       const profiles = await this.pool.query('SELECT id, data FROM profiles');
       for (const r of profiles.rows) this.profiles[r.id] = r.data;
+      const docs = await this.pool.query('SELECT kind, id, data FROM docs');
+      for (const r of docs.rows) (this.docs[r.kind] ??= {})[r.id] = r.data;
       this.kind = 'neon';
     } else {
       try {
@@ -104,9 +118,95 @@ export class Store {
       try {
         this.replays = JSON.parse(fs.readFileSync(REPLAY_FILE, 'utf8'));
       } catch {}
+      try {
+        Object.assign(this.docs, JSON.parse(fs.readFileSync(DOCS_FILE, 'utf8')));
+      } catch {}
       this.kind = 'json';
     }
-    console.log(`Storage: ${this.kind} (${Object.keys(this.players).length} players)`);
+    this.byEmail = new Map();
+    this.byWallet = new Map();
+    for (const a of Object.values(this.docs.account)) this.indexAccount(a);
+  }
+
+  // ---------------------------------------------------------------- documents
+
+  doc(kind, id) {
+    return this.docs[kind]?.[id] ?? null;
+  }
+
+  allDocs(kind) {
+    return Object.values(this.docs[kind] ?? {});
+  }
+
+  saveDoc(kind, id, data) {
+    (this.docs[kind] ??= {})[id] = data;
+    if (!this.pool) return this.scheduleFileSave();
+    this.pool
+      .query('INSERT INTO docs (kind, id, data, updated_at) VALUES ($1, $2, $3, now()) ON CONFLICT (kind, id) DO UPDATE SET data = $3, updated_at = now()', [kind, id, data])
+      .catch((e) => log.error('doc save', { kind, err: e.message }));
+  }
+
+  deleteDoc(kind, id) {
+    delete this.docs[kind]?.[id];
+    if (!this.pool) return this.scheduleFileSave();
+    this.pool.query('DELETE FROM docs WHERE kind = $1 AND id = $2', [kind, id]).catch((e) => log.error('doc delete', { kind, err: e.message }));
+  }
+
+  // ---------------------------------------------------------------- accounts
+
+  indexAccount(a) {
+    if (a.email) this.byEmail.set(a.email, a.id);
+    if (a.wallet) this.byWallet.set(a.wallet, a.id);
+  }
+
+  account(id) {
+    return this.doc('account', id);
+  }
+
+  accountByEmail(email) {
+    return this.account(this.byEmail.get(email));
+  }
+
+  accountByWallet(wallet) {
+    return this.account(this.byWallet.get(wallet));
+  }
+
+  saveAccount(a) {
+    this.indexAccount(a);
+    this.saveDoc('account', a.id, a);
+  }
+
+  // ---------------------------------------------------------------- public replays (TV)
+
+  addPublicReplay(meta) {
+    const list = (this.doc('tv', 'list') ?? []).filter((r) => r.id !== meta.id);
+    list.unshift(meta);
+    list.length = Math.min(list.length, PUBLIC_REPLAYS);
+    this.saveDoc('tv', 'list', list);
+  }
+
+  publicReplays() {
+    return (this.doc('tv', 'list') ?? []).map(({ record, ...meta }) => meta);
+  }
+
+  publicReplay(id) {
+    return (this.doc('tv', 'list') ?? []).find((r) => r.id === id) ?? null;
+  }
+
+  /** For /healthz: the database answers (JSON storage is always healthy). */
+  async healthy() {
+    if (!this.pool) return true;
+    try {
+      await Promise.race([this.pool.query('SELECT 1'), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 2000))]);
+      return true;
+    } catch (e) {
+      log.error('health check failed', { err: e.message });
+      return false;
+    }
+  }
+
+  logBoot() {
+    log.info('storage ready', { kind: this.kind, players: Object.keys(this.players).length, accounts: Object.keys(this.docs.account).length, clans: Object.keys(this.docs.clan).length });
   }
 
   has(id) {
@@ -161,7 +261,7 @@ export class Store {
     this.chat.push(entry);
     if (this.chat.length > CHAT_HISTORY) this.chat.shift();
     if (this.pool) {
-      this.pool.query('INSERT INTO chat_messages (name, country, text, ts) VALUES ($1, $2, $3, $4)', [entry.name, entry.country, entry.text, entry.ts]).catch((e) => console.error('chat insert', e.message));
+      this.pool.query('INSERT INTO chat_messages (name, country, text, ts) VALUES ($1, $2, $3, $4)', [entry.name, entry.country, entry.text, entry.ts]).catch((e) => log.error('chat insert', { err: e.message }));
     } else this.scheduleFileSave();
   }
 
@@ -176,7 +276,7 @@ export class Store {
            pvp_wins=$8, pvp_losses=$9, streak=$10, best_streak=$11, updated_at=now()`,
         [id, p.name, p.country, p.towers, p.cards, p.wins, p.losses, p.pvpWins, p.pvpLosses, p.streak, p.bestStreak],
       )
-      .catch((e) => console.error('player upsert', e.message));
+      .catch((e) => log.error('player upsert', { err: e.message }));
   }
 
   getProfile(id) {
@@ -188,7 +288,7 @@ export class Store {
     if (!this.pool) return this.scheduleFileSave();
     this.pool
       .query('INSERT INTO profiles (id, data, updated_at) VALUES ($1, $2, now()) ON CONFLICT (id) DO UPDATE SET data = $2, updated_at = now()', [id, data])
-      .catch((e) => console.error('profile save', e.message));
+      .catch((e) => log.error('profile save', { err: e.message }));
   }
 
   /** Keeps the newest replays per player (metadata is listed, the full record fetched on demand). */
@@ -197,7 +297,7 @@ export class Store {
     list.unshift(replay);
     list.length = Math.min(list.length, REPLAYS_PER_PLAYER);
     if (!this.pool) return this.scheduleFileSave();
-    await this.pool.query('INSERT INTO replays (id, player, data) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING', [replay.id, player, replay]).catch((e) => console.error('replay save', e.message));
+    await this.pool.query('INSERT INTO replays (id, player, data) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING', [replay.id, player, replay]).catch((e) => log.error('replay save', { err: e.message }));
   }
 
   async listReplays(player) {
@@ -224,6 +324,7 @@ export class Store {
       fs.writeFile(CHAT_FILE, JSON.stringify(this.chat), () => {});
       fs.writeFile(PROFILE_FILE, JSON.stringify(this.profiles), () => {});
       fs.writeFile(REPLAY_FILE, JSON.stringify(this.replays), () => {});
+      fs.writeFile(DOCS_FILE, JSON.stringify(this.docs), () => {});
     }, 1000);
   }
 }

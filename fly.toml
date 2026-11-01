@@ -1,11 +1,17 @@
 app = "pump-royale"
 primary_region = "iad"
+# Let open matches see the shutdown notice before the machine stops.
+kill_signal = "SIGTERM"
+kill_timeout = "15s"
 
 [build]
 
 [env]
   PORT = "8080"
+  NODE_ENV = "production"
+  LOG_LEVEL = "info"
 
+# Live matches are held in memory: run exactly one machine (fly scale count 1).
 [http_service]
   internal_port = 8080
   force_https = true

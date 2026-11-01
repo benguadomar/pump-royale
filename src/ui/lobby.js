@@ -9,6 +9,8 @@ import { net } from '../net.js';
 import { state, save, currentArena } from '../state.js';
 import { ARENAS } from '../data/arenas.js';
 import { resourceBar, chestSlots, questsBody } from './progress.js';
+import { walletSignIn, shortKey } from './account.js';
+import { openClan } from './clan.js';
 
 const X_URL = 'https://x.com/';
 const MAX_FEED = 9;
@@ -72,39 +74,22 @@ function liveTicker() {
 
 // ------------------------------------------------------------------ wallet
 
-const phantom = () => window.phantom?.solana ?? (window.solana?.isPhantom ? window.solana : null);
-const shortKey = (k) => `${k.slice(0, 4)}…${k.slice(-4)}`;
-
+/** Shows the linked wallet; otherwise signs in with Phantom (signed challenge, no transaction). */
 function walletButton() {
   const btn = h('button', { class: 'btn wallet-btn' });
-  const render = () => btn.replaceChildren(icon('wallet'), state.wallet ? shortKey(state.wallet) : 'Connect Wallet');
+  const render = () => {
+    const key = net.account?.wallet;
+    btn.replaceChildren(icon('wallet'), key ? shortKey(key) : 'Connect Wallet');
+    btn.title = key ? 'Wallet linked to your account' : 'Sign in with Phantom';
+  };
   btn.onclick = async () => {
     sfx.click();
-    const provider = phantom();
-    if (state.wallet) {
-      await provider?.disconnect?.().catch(() => {});
-      state.wallet = null;
-      save();
-      render();
-      toastMsg('Wallet disconnected');
-      return;
-    }
-    if (!provider) {
-      window.open('https://phantom.app/download', '_blank', 'noopener');
-      toastMsg('Install Phantom to connect a Solana wallet');
-      return;
-    }
-    try {
-      const res = await provider.connect();
-      state.wallet = res.publicKey.toString();
-      save();
-      render();
-      toastMsg('Wallet connected');
-    } catch {
-      toastMsg('Wallet connection cancelled');
-    }
+    if (net.account?.wallet) return toastMsg('Wallet linked — manage it in your Profile');
+    if (await walletSignIn()) render();
   };
+  const off = net.on('session', render);
   render();
+  btn.destroy = off;
   return btn;
 }
 
@@ -163,6 +148,7 @@ export function createLobby({ engine, chat, onPlay, onOnline, onReplay }) {
     { class: 'side-col wood panel', onpointerdown: (e) => e.stopPropagation() },
     sideBtn('profile', img('/assets/ui/icon-profile.png'), 'Profile', () => (closePop(), openProfile({ onReplay }))),
     sideBtn('quests', icon('quest'), 'Quests & Season Pass', () => togglePop('quests', questsBody)),
+    sideBtn('clan', icon('shield'), 'Clan', () => (closePop(), openClan())),
     sideBtn('settings', icon('gear'), 'Settings', () => togglePop('settings', () => settingsBody(engine))),
     sideBtn('howto', icon('book'), 'How to play', () => togglePop('howto', howToBody)),
     sideBtn('social', icon('share'), 'Socials', () => togglePop('social', socialsBody)),
@@ -209,16 +195,17 @@ export function createLobby({ engine, chat, onPlay, onOnline, onReplay }) {
   }
 
   const ping = pingPill();
+  const wallet = walletButton();
   const feedEl = feed();
   const ticker = liveTicker();
   const resources = resourceBar();
   const chests = chestSlots(engine);
-  destroyers.push(ping.destroy, feedEl.destroy, ticker.destroy, resources.destroy, chests.destroy);
+  destroyers.push(wallet.destroy, ping.destroy, feedEl.destroy, ticker.destroy, resources.destroy, chests.destroy);
 
   const root = h(
     'div',
     { class: 'hud lobby' },
-    h('div', { class: 'ping-row' }, ping, walletButton()),
+    h('div', { class: 'ping-row' }, ping, wallet),
     resources.el,
     ticker,
     chests.el,

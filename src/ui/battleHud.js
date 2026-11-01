@@ -9,7 +9,7 @@ import { EMOTES, EMOTE_IDS, EMOTE_COOLDOWN_MS, emoteImg } from '../data/emotes.j
 
 const DRAG_THRESHOLD = 8;
 const EMOTE_SHOW_MS = 2800;
-const PLAY_ERRORS = { elixir: 'Not enough elixir!', zone: "Can't deploy there", card: 'Card already played', over: 'Match is over', replay: 'Watching a replay' };
+const PLAY_ERRORS = { elixir: 'Not enough elixir!', zone: "Can't deploy there", card: 'Card already played', over: 'Match is over', replay: 'Watching a replay', spectate: 'You are spectating', rate: 'Slow down!' };
 
 const fmtTime = (s) => {
   const t = Math.max(0, Math.ceil(s));
@@ -40,7 +40,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
     h('div', { class: 'crown-row opp' }, img('/assets/ui/icon-crown.png'), oppCrowns),
     h('div', { class: 'time-row' }, timeBox, x2),
     h('div', { class: 'crown-row me' }, img('/assets/ui/icon-crown.png'), myCrowns),
-    h('div', { class: 'who me' }, h('span', { class: 'dot' }), flag(state.country), state.name),
+    h('div', { class: 'who me' }, h('span', { class: 'dot' }), flag(session.spectator?.players[0].country ?? state.country), session.spectator?.players[0].name ?? state.name),
   );
 
   // ---------------------------------------------------------------- deck bar (bottom centre)
@@ -98,6 +98,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
     deckBar,
     mediaBox(),
     session.mode === 'replay' && replayBar(session),
+    session.mode === 'spectate' && liveBar(session),
   );
 
   // ---------------------------------------------------------------- emotes
@@ -157,7 +158,7 @@ export function createBattleHud({ engine, session, view, chat, onMenu }) {
   session.onEmote = (id) => showEmote(id, 'opp');
 
   function confirmMenu() {
-    if (session.view()?.over || session.mode === 'replay') return onMenu();
+    if (session.view()?.over || session.mode === 'replay' || session.mode === 'spectate') return onMenu();
     const box = h(
       'div',
       { class: 'backdrop' },
@@ -415,6 +416,12 @@ function replayBar(session) {
   return h('div', { class: 'replay-bar wood panel interactive' }, h('span', { class: 'rec' }), h('b', {}, 'REPLAY'), h('span', {}, `vs ${session.oppName}`), speeds);
 }
 
+/** Spectator banner: both players (blue is player 0, whose side we watch from). */
+function liveBar(session) {
+  const [a, b] = session.spectator.players;
+  return h('div', { class: 'replay-bar live-bar wood panel interactive' }, h('span', { class: 'rec' }), h('b', {}, 'LIVE'), h('span', { class: 'blue-name' }, `${a.name} (${a.trophies})`), h('span', { class: 'dim' }, 'vs'), h('span', { class: 'red-name' }, `${b.name} (${b.trophies})`));
+}
+
 const CHEST_LABEL = { wooden: 'Wooden', silver: 'Silver', gold: 'Golden', magical: 'Magical' };
 
 /** Rewards row: trophies, XP, pass XP, chest, new arena — filled in once the server answers. */
@@ -431,14 +438,25 @@ function rewardsBody(summary) {
   ];
 }
 
-export function showResult(r, { onPlayAgain, onMenu, replay = false, ranked = false }) {
+export function showResult(r, { onPlayAgain, onMenu, onRematch, replay = false, ranked = false, note: noteText }) {
   const title = { win: 'VICTORY', loss: 'DEFEAT', draw: 'DRAW' }[r.result];
   const close = (fn) => () => {
     sfx.click();
     backdrop.remove();
     fn();
   };
-  const note = ranked ? 'Calculating rewards…' : replay ? 'Replay — no rewards.' : 'Unranked match (offline) — no rewards.';
+  const note = noteText ?? (ranked ? 'Calculating rewards…' : replay ? 'Replay — no rewards.' : 'Unranked match (offline) — no rewards.');
+  const rematchBtn =
+    onRematch &&
+    h('button', {
+      class: 'btn rematch-btn',
+      onclick: () => {
+        sfx.click();
+        rematchBtn.disabled = true;
+        rematchBtn.textContent = 'Waiting for opponent…';
+        onRematch();
+      },
+    }, 'REMATCH');
   const rewards = h('div', { class: 'result-rewards inset' }, h('span', { class: 'dim' }, note));
   const backdrop = h(
     'div',
@@ -458,13 +476,26 @@ export function showResult(r, { onPlayAgain, onMenu, replay = false, ranked = fa
       ),
       rewards,
       h('div', { class: 'deployed-cols' }, deployedList('YOU DEPLOYED', r.myDeployed, 'you'), deployedList('OPPONENT DEPLOYED', r.oppDeployed, 'opp')),
-      h('div', { class: 'result-actions' }, !replay && h('button', { class: 'btn gold', onclick: close(onPlayAgain) }, 'PLAY AGAIN'), h('button', { class: 'btn', onclick: close(onMenu) }, 'MENU')),
+      h('div', { class: 'result-actions' }, !replay && onPlayAgain && h('button', { class: 'btn gold', onclick: close(onPlayAgain) }, 'PLAY AGAIN'), rematchBtn, h('button', { class: 'btn', onclick: close(onMenu) }, 'MENU')),
     ),
   );
   app().append(backdrop);
   return {
     setRewards(summary) {
       rewards.replaceChildren(...rewardsBody(summary).filter(Boolean));
+    },
+    /** 'offered' (opponent asked), 'expired' (window closed / opponent left). */
+    setRematch(stateName) {
+      if (!rematchBtn) return;
+      if (stateName === 'offered' && !rematchBtn.disabled) rematchBtn.textContent = 'REMATCH? Opponent is in!';
+      if (stateName === 'offered') rematchBtn.classList.add('gold');
+      if (stateName === 'expired') {
+        rematchBtn.disabled = true;
+        rematchBtn.textContent = 'Rematch unavailable';
+      }
+    },
+    close() {
+      backdrop.remove();
     },
   };
 }

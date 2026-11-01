@@ -24,8 +24,18 @@ function detectCountry() {
 }
 const isValidDeck = (d) => Array.isArray(d) && d.length === 8 && new Set(d).size === 8 && d.every((id) => CARD_BY_ID[id]);
 
+// A magic-link sign-in lands on /?session=<token>: adopt it (the server tells us the account id).
+const params = new URLSearchParams(location.search);
+const landedSession = params.get('session');
+if (landedSession) {
+  params.delete('session');
+  history.replaceState(null, '', `${location.pathname}${params.size ? `?${params}` : ''}`);
+}
+
 export const state = {
-  id: saved.id || crypto.randomUUID(),
+  id: landedSession ? '' : saved.id || crypto.randomUUID(),
+  /** Signed session (JWT) from the server; it, not the id, proves who we are. */
+  token: landedSession ?? saved.token ?? null,
   isReturning: Boolean(saved.id),
   name: saved.name || `Player${Math.floor(1000 + Math.random() * 9000)}`,
   nameLocked: Boolean(saved.nameLocked),
@@ -46,8 +56,8 @@ export function onStateChange(fn) {
 }
 
 export function save() {
-  const { id, name, nameLocked, deck, settings, stats, history, wallet, trophies, arena } = state;
-  localStorage.setItem(KEY, JSON.stringify({ id, name, nameLocked, deck, settings, stats, history, wallet, trophies, arena }));
+  const { id, token, name, nameLocked, deck, settings, stats, history, wallet, trophies, arena } = state;
+  localStorage.setItem(KEY, JSON.stringify({ id, token, name, nameLocked, deck, settings, stats, history, wallet, trophies, arena }));
   for (const fn of listeners) fn(state);
 }
 

@@ -1,4 +1,4 @@
-import { state } from './state.js';
+import { state, save } from './state.js';
 
 const PING_INTERVAL_MS = 2000;
 const RECONNECT_MS = 3000;
@@ -16,6 +16,9 @@ export const net = {
   leaderboard: { towers: [], cards: [], wins: [] },
   /** Server-owned progression (trophies, currencies, cards, chests...). Read-only here. */
   profile: null,
+  /** { id, email, wallet, guest } once the server accepted our session. */
+  account: null,
+  clan: null,
 
   on(type, fn) {
     (handlers[type] ??= new Set()).add(fn);
@@ -58,7 +61,7 @@ function connect() {
 
   ws.onopen = () => {
     net.connected = true;
-    net.send({ t: 'hello', id: state.id, name: state.name, country: state.country });
+    net.send({ t: 'hello', token: state.token, id: state.id, name: state.name, country: state.country });
     sendPing();
     clearInterval(pingTimer);
     pingTimer = setInterval(sendPing, PING_INTERVAL_MS);
@@ -85,6 +88,24 @@ function connect() {
       emit('profile', msg.profile);
     }
     switch (msg.t) {
+      case 'session':
+        if (msg.error) {
+          emit('session', msg);
+          break;
+        }
+        adoptSession(msg);
+        break;
+      case 'auth-required':
+        // Our token is gone but the id is protected: start over as a fresh guest.
+        state.id = crypto.randomUUID();
+        state.token = null;
+        save();
+        ws.close();
+        break;
+      case 'clan':
+        net.clan = msg.clan;
+        emit('clan', msg.clan);
+        break;
       case 'pong':
         net.ping = Math.round(performance.now() - msg.ts);
         emit('status');
@@ -93,7 +114,7 @@ function connect() {
         net.online = msg.online;
         net.chat = msg.chat;
         net.feed = msg.feed;
-        net.leaderboard = { wins: [], ...msg.leaderboard };
+        net.leaderboard = { wins: [], clans: [], ...msg.leaderboard };
         emit('welcome');
         emit('status');
         emit('leaderboard');
@@ -113,7 +134,7 @@ function connect() {
         emit('feed', msg.item);
         break;
       case 'leaderboard':
-        net.leaderboard = { towers: msg.towers, cards: msg.cards, wins: msg.wins ?? [] };
+        net.leaderboard = { towers: msg.towers, cards: msg.cards, wins: msg.wins ?? [], clans: msg.clans ?? [] };
         emit('leaderboard');
         break;
       default:
@@ -121,6 +142,18 @@ function connect() {
         emit(msg.t, msg);
     }
   };
+}
+
+/** Stores the server's session; signing into another account reloads into it. */
+function adoptSession(msg) {
+  const switched = state.id && state.id !== msg.account.id;
+  state.token = msg.token;
+  state.id = msg.account.id;
+  if (msg.name) state.name = msg.name;
+  save();
+  net.account = msg.account;
+  emit('session', msg);
+  if (switched) location.reload();
 }
 
 function sendPing() {

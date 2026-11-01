@@ -12,8 +12,9 @@ import { h, img, app } from './ui/dom.js';
 import { createChat } from './ui/chat.js';
 import { createLobby } from './ui/lobby.js';
 import { createBattleHud, showResult } from './ui/battleHud.js';
-import { findMatch, showVersus } from './ui/matchmaking.js';
+import { findMatch, showVersus, openBattleMenu } from './ui/matchmaking.js';
 import { closeModal } from './ui/modal.js';
+import { toastMsg } from './ui/widgets.js';
 
 const DESIGN_W = 1366;
 const DESIGN_H = 768;
@@ -47,6 +48,15 @@ const AI_LINES = {
 const say = (key) => AI_LINES[key][Math.floor(Math.random() * AI_LINES[key].length)];
 
 // ------------------------------------------------------------------ UI scaling
+
+// Browser errors go to the server, which forwards them to Sentry when configured.
+let reported = 0;
+function reportError(message, stack) {
+  if (import.meta.env.DEV || reported++ > 10) return;
+  fetch('/api/client-error', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, stack, url: location.href }) }).catch(() => {});
+}
+window.addEventListener('error', (e) => reportError(e.message, e.error?.stack));
+window.addEventListener('unhandledrejection', (e) => reportError(String(e.reason?.message ?? e.reason), e.reason?.stack));
 
 const appEl = app();
 let engineRef = null;
@@ -123,7 +133,7 @@ async function boot() {
     engine.world.showLobbyTowers(true);
     engine.setMode('lobby');
     playMusic('lobby');
-    lobby = createLobby({ engine, chat, onPlay: startAi, onOnline: startOnline, onReplay: watchReplay });
+    lobby = createLobby({ engine, chat, onPlay: startAi, onOnline: openOnline, onReplay: watchReplay });
     appEl.append(lobby.el);
     lobby.mounted();
   };
@@ -151,21 +161,42 @@ async function boot() {
     startBattle(new LocalSession(state.deck, match));
   }
 
-  async function watchReplay(id) {
-    const msg = await net.request({ t: 'replay', id }, 'replay');
-    if (msg?.replay) startBattle(new ReplaySession(msg.replay));
+  async function watchReplay(id, isPublic = false) {
+    const msg = await net.request({ t: 'replay', id, public: isPublic }, 'replay');
+    if (msg?.replay) startBattle(new ReplaySession(msg.replay.players ? { ...msg.replay, opp: msg.replay.players[1].name } : msg.replay));
   }
 
-  async function startOnline() {
+  function openOnline() {
+    openBattleMenu({
+      onRanked: () => startOnline({ kind: 'ranked' }),
+      onFriendlyCreate: () => startOnline({ kind: 'friendly-create' }),
+      onFriendlyJoin: (code) => startOnline({ kind: 'friendly-join', code }),
+      onSpectate: spectate,
+      onPublicReplay: (id) => watchReplay(id, true),
+    });
+  }
+
+  /** Ranked or friendly: waits for the server's match-found, then plays it. */
+  async function startOnline(opts = { kind: 'ranked' }) {
     leaveLobby();
     engine.setMode('battle');
-    const match = await findMatch();
+    const match = await findMatch(opts);
     if (!match) {
       enterLobby();
       return;
     }
+    playOnline(match);
+  }
+
+  async function playOnline(match) {
     await showVersus(match);
-    startBattle(new OnlineSession({ room: match.room, oppName: match.opp.name, oppFlag: match.opp.country }));
+    startBattle(new OnlineSession({ room: match.room, oppName: match.opp.name, oppFlag: match.opp.country, matchMode: match.mode }));
+  }
+
+  async function spectate(room) {
+    const msg = await net.request({ t: 'spectate', room }, 'spectate-start', { timeout: 4000 });
+    if (!msg) return toastMsg('That match just ended');
+    startBattle(new OnlineSession({ room, oppName: msg.players[1].name, oppFlag: msg.players[1].country, matchMode: msg.mode, spectator: { players: msg.players } }));
   }
 
   /** Runs one match (either mode) from first frame to the results screen. */
@@ -178,7 +209,9 @@ async function boot() {
     playMusic(arena.music);
 
     const online = session.mode === 'online';
-    const replay = session.mode === 'replay';
+    const replay = session.mode === 'replay' || session.mode === 'spectate';
+    const spectating = session.mode === 'spectate';
+    const friendly = online && session.matchMode === 'friendly';
     let finished = false;
     let hud = null;
 
@@ -217,7 +250,7 @@ async function boot() {
       });
       setTimeout(() => !finished && chat.addGame({ name: session.oppName, kind: 'ai', text: say('start') }), 1200);
     }
-    if (!replay) chat.addGame({ kind: 'system', text: online ? `Matched with ${session.oppName} — chat here during the battle.` : 'Match started — chat with your opponent here.' });
+    if (!replay) chat.addGame({ kind: 'system', text: online ? `${friendly ? 'Friendly battle' : 'Matched'} with ${session.oppName} — chat here during the battle.` : 'Match started — chat with your opponent here.' });
 
     const finish = (r) => {
       if (finished || !r) return;
@@ -225,27 +258,47 @@ async function boot() {
       if (!replay) recordMatch({ result: r.result, myCrowns: r.myCrowns, enemyCrowns: r.enemyCrowns, opponent: online ? session.oppName : 'AI', mode: session.mode });
       r.result === 'win' ? sfx.win() : r.result === 'loss' ? sfx.lose() : sfx.click();
       if (session.mode === 'ai') chat.addGame({ name: session.oppName, kind: 'ai', text: say(r.result === 'win' ? 'loss' : 'win') });
-      const ranked = online || (session.mode === 'ai' && session.match);
+      const ranked = (online && !friendly) || (session.mode === 'ai' && session.match);
+      const [blue, red] = session.spectator?.players ?? [];
+      const note = spectating ? `Spectated · ${r.result === 'draw' ? 'Draw' : `${r.result === 'win' ? blue.name : red.name} wins`}` : friendly ? 'Friendly battle — no trophies at stake.' : undefined;
       const screen = showResult(r, {
         replay,
         ranked,
-        onPlayAgain: () => {
+        note,
+        onPlayAgain: friendly || spectating ? null : () => {
           teardown();
-          if (online) startOnline();
+          if (online) startOnline({ kind: 'ranked' });
           else startAi();
         },
+        onRematch: online ? () => net.request({ t: 'rematch', room: session.room, deck: state.deck }, 'econ', { op: 'rematch' }).then((m) => m?.error && screen.setRematch('expired')) : null,
         onMenu: () => {
           teardown();
           enterLobby();
         },
       });
+      resultScreen = screen;
+      if (rematchOffered) screen.setRematch('offered');
+      if (online) {
+        // Both rematch votes start a new friendly room.
+        const offFound = net.on('match-found', (m) => {
+          offFound();
+          screen.close();
+          teardown();
+          playOnline(m);
+        });
+        offs.push(offFound);
+      }
       // The server decides the rewards: a re-simulated AI match, or the online room's result.
       if (session.mode === 'ai' && session.match) {
         net.request({ t: 'ai-end', matchId: session.match.matchId, inputs: session.inputs }, 'reward', { timeout: 15000 }).then((m) => screen.setRewards(m?.summary ?? null));
-      } else if (online) onlineReward.then((m) => screen.setRewards(m?.summary ?? null));
+      } else if (online && !friendly) onlineReward.then((m) => screen.setRewards(m?.summary ?? null));
     };
 
     let overAt = null;
+    let resultScreen = null;
+    let rematchOffered = false;
+    // The opponent may vote for a rematch before our result screen is up.
+    if (online) offs.push(net.on('rematch-offer', () => ((rematchOffered = true), resultScreen?.setRematch('offered'))));
     const unsub = engine.onUpdate((dt, t) => {
       session.update(dt);
       const v = session.view();
@@ -289,6 +342,18 @@ async function boot() {
   }
 
   enterLobby();
+  // Invite links: /?friend=CODE joins that friendly battle once connected.
+  const params = new URLSearchParams(location.search);
+  const friendCode = params.get('friend');
+  const auth = params.get('auth');
+  if (friendCode || auth) {
+    params.delete('friend');
+    params.delete('auth');
+    history.replaceState(null, '', `${location.pathname}${params.size ? `?${params}` : ''}`);
+  }
+  if (friendCode) startOnline({ kind: 'friendly-join', code: friendCode.toUpperCase().slice(0, 6) });
+  if (auth === 'expired') toastMsg('That sign-in link expired — request a new one');
+  if (auth === 'email') net.on('session', (m) => m.account?.email && toastMsg(`Signed in as ${m.account.email}`));
   clearInterval(lineTimer);
   barFill.style.width = '100%';
   loading.classList.add('done');

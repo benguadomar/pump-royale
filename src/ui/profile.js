@@ -5,6 +5,7 @@ import { state, renameOnce } from '../state.js';
 import { net } from '../net.js';
 import { CARD_BY_ID, cardImg } from '../data/cards.js';
 import { kingLevel, towerLevel, XP_LEVELS, leagueFor } from '../data/economy.js';
+import { accountSection } from './account.js';
 
 export function openProfile({ onReplay } = {}) {
   const nameRow = h('div', {});
@@ -127,6 +128,7 @@ export function openProfile({ onReplay } = {}) {
         h('div', {}, h('div', { class: 'profile-label' }, 'YOUR PROFILE'), nameRow, note),
       ),
       ...head,
+      accountSection(),
       h('div', { class: 'stats-grid' }, box(s.wins, 'WINS'), box(s.losses, 'LOSSES'), box(`${winRate}%`, 'WIN RATE'), box(p ? p.bestTrophies : state.stats.bestStreak, p ? 'BEST TROPHIES' : 'BEST STREAK')),
       ...cardsSection,
       h('div', { class: 'section-title' }, 'MATCH HISTORY & REPLAYS'),

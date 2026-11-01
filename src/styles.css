@@ -3013,3 +3013,376 @@ button.res-pill:hover {
   margin-top: auto;
   margin-bottom: 18px;
 }
+
+/* ---------------------------------------------------------------- online: battle menu */
+
+.battle-menu {
+  width: 560px;
+}
+.battle-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.battle-menu-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 260px;
+}
+.bm-card {
+  padding: 12px 14px;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bm-card .title {
+  font-size: 20px;
+  color: var(--gold-1);
+}
+.bm-card p {
+  margin: 0;
+}
+.bm-league {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+}
+.big-btn {
+  height: 58px;
+  font-size: 22px;
+  gap: 10px;
+}
+.big-btn img {
+  height: 34px;
+}
+.join-row,
+.account-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.code-input {
+  flex: 1;
+  height: 44px;
+  padding: 0 14px;
+  font-family: var(--font-title);
+  font-size: 24px;
+  letter-spacing: 6px;
+  text-align: center;
+  color: #fff3d6;
+  background: #1a0f07;
+  border: 2px solid #4a2a12;
+  border-radius: 10px;
+}
+.email-input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 12px;
+  font: inherit;
+  color: #fff3d6;
+  background: #1a0f07;
+  border: 2px solid #4a2a12;
+  border-radius: 8px;
+}
+.mm-code {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 0;
+}
+.mm-code .code {
+  font-size: 40px;
+  letter-spacing: 8px;
+  color: var(--gold-1);
+  text-shadow: 0 3px 0 #3b200d;
+}
+.tv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 52vh;
+}
+.tv-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+.tv-row:hover {
+  border-color: var(--gold-1);
+}
+.tv-names {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.tv-names small {
+  color: var(--gold-1);
+}
+.tv-right {
+  font-weight: 800;
+  white-space: nowrap;
+}
+.live-dot {
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 900;
+  color: #fff;
+  background: #e0312b;
+  animation: hint-pulse 1.2s infinite;
+}
+.blue-name {
+  color: #8cc8ff;
+}
+.red-name {
+  color: #ff9a8c;
+}
+.dim.small {
+  font-size: 11px;
+}
+.rematch-btn.gold {
+  animation: chest-ready 1s ease-in-out infinite;
+}
+
+/* ---------------------------------------------------------------- account */
+
+.account-box {
+  padding: 10px 12px;
+  border-radius: 10px;
+  margin: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.account-box .section-title {
+  margin: 0;
+}
+.account-box p {
+  margin: 0;
+  font-size: 13px;
+}
+.account-linked {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.account-out {
+  font-size: 13px;
+}
+.account-out a {
+  color: var(--gold-1);
+}
+.wallet-login {
+  background: linear-gradient(180deg, #8b6cff, #5a3fd6);
+}
+.small-btn {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+  align-self: flex-start;
+}
+
+/* ---------------------------------------------------------------- clans */
+
+.clan-modal {
+  width: 820px;
+}
+.clan-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.clan-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 50vh;
+}
+.clan-row,
+.clan-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 10px;
+}
+.clan-row .rank {
+  width: 30px;
+  color: var(--gold-1);
+}
+.clan-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.clan-head .clan-info .title {
+  font-size: 22px;
+  color: var(--gold-1);
+}
+.clan-troph,
+.member-troph {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 800;
+}
+.clan-troph img,
+.member-troph img {
+  height: 20px;
+}
+.clan-badge {
+  width: 28px;
+  height: 34px;
+  flex: none;
+  clip-path: polygon(50% 0, 100% 18%, 100% 62%, 50% 100%, 0 62%, 0 18%);
+  box-shadow: inset 0 0 0 3px rgba(0, 0, 0, 0.3);
+}
+.clan-badge.big {
+  width: 44px;
+  height: 52px;
+}
+.badge-pick {
+  display: flex;
+  gap: 8px;
+}
+.badge-btn {
+  padding: 4px;
+  border-radius: 8px;
+  background: transparent;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+.badge-btn.on {
+  border-color: var(--gold-1);
+}
+.clan-create {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 10px;
+}
+.clan-create .btn {
+  align-self: flex-start;
+  gap: 4px;
+}
+.clan-cols {
+  display: flex;
+  gap: 10px;
+}
+.clan-col {
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.clan-col.wide {
+  flex: 1;
+  width: auto;
+}
+.clan-members,
+.clan-chat {
+  height: 44vh;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.22);
+}
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.member-row.me {
+  background: rgba(255, 224, 122, 0.12);
+}
+.member-row b {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.member-row .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6b5a48;
+}
+.member-row .dot.on {
+  background: #3cd65a;
+}
+.leader {
+  color: var(--gold-1);
+  font-weight: 800;
+}
+.clan-msg {
+  font-size: 13px;
+}
+.clan-msg b {
+  color: var(--gold-1);
+}
+.clan-sys {
+  font-size: 12px;
+  font-style: italic;
+  color: #c9b48f;
+  text-align: center;
+}
+.clan-req {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 2px solid rgba(170, 190, 210, 0.6);
+}
+.clan-req.rarity-rare {
+  border-color: #f0a43a;
+}
+.clan-req.rarity-epic {
+  border-color: #c06af0;
+}
+.clan-req .icon {
+  height: 44px;
+}
+.req-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.clan-req .btn {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+.request-modal {
+  width: 720px;
+}
+.request-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 112px);
+  gap: 10px;
+  max-height: 60vh;
+  justify-content: center;
+}
