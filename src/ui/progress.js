@@ -14,7 +14,7 @@ import {
 // to change it; the server replies with the updated profile.
 
 const CHEST_LABEL = { wooden: 'Wooden', silver: 'Silver', gold: 'Golden', magical: 'Magical' };
-const ERRORS = { busy: 'Another chest is already unlocking', gems: 'Not enough gems', gold: 'Not enough gold', shards: 'Not enough cards yet', locked: 'Still locked' };
+const ERRORS = { busy: 'Another chest is already unlocking', gems: 'Not enough gems', gold: 'Not enough gold', shards: 'Not enough cards yet', locked: 'Still locked', soldout: 'Sold out until the next refresh', expired: 'The shop just refreshed — take a look', maxed: 'That card is already max level' };
 
 export const fmtSecs = (s) => {
   s = Math.max(0, Math.ceil(s));
@@ -42,7 +42,7 @@ export async function econ(msg) {
  * Re-renders `build()` into `el` whenever the profile changes. Stops by itself once the
  * element has been removed from the page; also returns an explicit unsubscribe.
  */
-function live(el, build) {
+export function live(el, build) {
   let mounted = false;
   const render = () => {
     if (mounted && !el.isConnected) return off();
@@ -131,11 +131,13 @@ async function onChest(engine, slot) {
   });
 }
 
-/** The chest flies in, bursts open, and the loot cards fly out one by one. */
 async function openChest(engine, slot, useGems) {
   const res = await econ({ t: 'chest-open', slot, gems: useGems });
-  if (!res) return;
-  const { loot } = res;
+  if (res) showLoot(engine, res.loot);
+}
+
+/** The chest flies in, bursts open, and the loot cards fly out one by one. */
+export function showLoot(engine, loot) {
   const show = engine.showChest(loot.type);
   const stage = h('div', { class: 'loot-stage' });
   const hint = h('div', { class: 'loot-hint title' }, 'TAP TO OPEN');

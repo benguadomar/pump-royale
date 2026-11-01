@@ -12,6 +12,7 @@ import { aiDifficulty } from '../sim/aiDifficulty.js';
 import { resourceBar, chestSlots, questsBody } from './progress.js';
 import { openClan } from './clan.js';
 import { openDaily, dailyClaimable, showNotices } from './daily.js';
+import { openShop } from './shop.js';
 
 const X_URL = 'https://x.com/';
 /** The daily calendar opens by itself at most once per page load. */
@@ -204,6 +205,7 @@ export function createLobby({ engine, chat, onPlay, onOnline, onReplay }) {
       'div',
       { class: 'menu-bar' },
       arenaChip,
+      menuBtn('shop-btn', null, [icon('shop'), 'SHOP'], () => openShop(engine), 'Chests for gems · hourly cards for gold'),
       menuBtn('', '/assets/ui/icon-cards.png', 'CARDS', openCards),
       menuBtn('gold play', '/assets/ui/icon-play.png', 'PLAY', onPlay, `Battle ${aiDifficulty(state.trophies).name} AI`),
       menuBtn('', '/assets/ui/icon-deck.png', 'DECK', openDeck),

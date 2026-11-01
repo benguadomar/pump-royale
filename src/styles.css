@@ -3623,3 +3623,143 @@ button.res-pill:hover {
   max-height: 60vh;
   justify-content: center;
 }
+
+/* ---------------------------------------------------------------- shop */
+.menu-bar .btn.shop-btn {
+  gap: 6px;
+  background: linear-gradient(180deg, #4fb35a, #2f8a3c 55%, #236d2e);
+}
+.menu-bar .btn.shop-btn .svg-icon {
+  font-size: 30px;
+  color: var(--gold-1);
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.45));
+}
+.shop-modal {
+  width: 800px;
+}
+.shop-modal .modal-head .res-pill {
+  height: 34px;
+  min-width: 80px;
+  font-size: 16px;
+}
+.shop {
+  max-height: 70vh;
+  padding-right: 4px;
+}
+.shop-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 4px 2px 8px;
+}
+.shop-head h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--gold-1);
+  letter-spacing: 0.8px;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.5);
+}
+.shop-timer {
+  font-family: var(--font-title);
+  font-size: 14px;
+  color: #ffe9b8;
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.3);
+}
+.shop-chests {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.shop-chest {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 10px 6px;
+  text-align: center;
+}
+.shop-chest .chest-icon {
+  width: 60px;
+  height: 46px;
+}
+.shop-chest b {
+  font-family: var(--font-title);
+  font-weight: 400;
+  font-size: 15px;
+}
+.shop-chest small {
+  font-size: 11px;
+}
+.shop .buy {
+  margin-top: 4px;
+  min-width: 84px;
+  padding: 4px 10px;
+  font-size: 16px;
+  gap: 4px;
+}
+.shop .buy .coin,
+.shop .buy .gem {
+  width: 18px;
+  height: 18px;
+}
+.shop .buy.armed {
+  animation: chest-ready 0.6s ease-in-out infinite;
+}
+.shop-offers {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 112px);
+  justify-content: center;
+  gap: 10px;
+}
+.shop-offer {
+  cursor: default;
+}
+.shop-offer .art {
+  height: 92px;
+}
+.shop-offer small {
+  font-size: 11px;
+  line-height: 1.2;
+}
+.shop-qty {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 1;
+  font-family: var(--font-title);
+  font-size: 18px;
+  color: #fff;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.7);
+}
+.shop-rarity {
+  font-family: var(--font-title);
+  letter-spacing: 0.4px;
+}
+.rarity-common .shop-rarity {
+  color: #c7d4e2;
+}
+.rarity-rare .shop-rarity {
+  color: #ffc36b;
+}
+.rarity-epic .shop-rarity {
+  color: #e0a8ff;
+}
+.rarity-legendary .shop-rarity {
+  color: #7ff3ea;
+}
+.shop-offer.sold .art {
+  filter: grayscale(1) brightness(0.55);
+}
+.shop-left {
+  color: var(--text-dim);
+}
+@media (max-width: 720px) {
+  .shop-chests {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

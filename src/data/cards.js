@@ -136,7 +136,7 @@ export const CARDS = [
   {
     id: 'wizard',
     name: 'Wizard',
-    rarity: 'Rare',
+    rarity: 'Epic',
     type: 'Troop',
     cost: 5,
     count: 1,
@@ -174,7 +174,7 @@ export const CARDS = [
   {
     id: 'pekka',
     name: 'P.E.K.K.A',
-    rarity: 'Epic',
+    rarity: 'Legendary',
     type: 'Troop',
     cost: 7,
     count: 1,

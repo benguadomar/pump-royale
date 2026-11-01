@@ -4,6 +4,7 @@ import {
   newProfile, refreshQuests, applyMatch, grant, rollChest, upgradeCost, towerLevel, kingLevel,
   CHESTS, gemsToOpen, MAX_CARD_LEVEL, TROPHY_ROAD, PASS_TIERS, passReward, passTier, START_LEVEL,
   DAILY_REWARDS, dailyStatus, dayKey, leaderboardReward,
+  CHEST_GEMS, shopOffers, hourKey,
 } from '../src/data/economy.js';
 import { ReplayDriver } from '../src/sim/replay.js';
 import { randomDeck, rng } from '../src/sim/sim.js';
@@ -18,6 +19,15 @@ const AI_NAMES = ['Sir Bot-a-Lot', 'Grumblebeard', 'Lady Elixira', 'Count Crumbl
 
 const rand = () => crypto.randomInt(0, 2 ** 32) / 2 ** 32;
 const isValidDeck = (d) => Array.isArray(d) && d.length === 8 && new Set(d).size === 8 && d.every((id) => CARD_BY_ID[id]);
+
+/** Rolls the player's hourly card offers when the UTC hour changes (purchase counts reset). */
+function refreshShop(id, p, now = Date.now()) {
+  const hour = hourKey(now);
+  if (p.shop?.hour === hour) return false;
+  const offers = shopOffers(id, hour);
+  p.shop = { hour, offers, bought: offers.map(() => 0) };
+  return true;
+}
 
 /**
  * Server-authoritative progression. The client only ever *asks*; every reward, unlock and
@@ -45,6 +55,7 @@ export class Economy {
       }
     }
     if (refreshQuests(p, rand)) dirty = true;
+    if (refreshShop(id, p)) dirty = true;
     if (dirty) this.store.saveProfile(id, p);
     return p;
   }
@@ -211,6 +222,47 @@ export class Economy {
     p.chests[slot] = null;
     this.save(id, p);
     return { profile: p, loot: { type: c.type, ...loot } };
+  }
+
+  // ---------------------------------------------------------------- shop
+
+  /** Buys a chest for gems at the server's price and opens it on the spot. */
+  chestBuy(id, type) {
+    const p = this.profile(id);
+    const cost = Object.hasOwn(CHEST_GEMS, type) ? CHEST_GEMS[type] : null;
+    if (!cost) return { error: 'chest' };
+    if (p.gems < cost) return { error: 'gems' };
+    p.gems -= cost;
+    const loot = rollChest(type, rand);
+    p.gold += loot.gold;
+    for (const [cid, n] of Object.entries(loot.cards)) p.cards[cid].shards += n;
+    this.save(id, p);
+    return { profile: p, loot: { type, ...loot }, cost };
+  }
+
+  /** Refreshes the hourly offers (the client asks when its countdown reaches zero). */
+  shop(id) {
+    return { profile: this.profile(id) };
+  }
+
+  /**
+   * Buys one bundle of an hourly offer. Only the slot index (and the hour the client was
+   * looking at) come from the client; card, amount and price are the server's own.
+   */
+  shopBuy(id, slot, hour) {
+    const p = this.profile(id);
+    if (hour !== p.shop.hour) return { error: 'expired', profile: p };
+    const offer = p.shop.offers[slot];
+    if (!offer) return { error: 'offer' };
+    if (p.shop.bought[slot] >= offer.limit) return { error: 'soldout' };
+    const own = p.cards[offer.card];
+    if (!own || own.level >= MAX_CARD_LEVEL) return { error: 'maxed' };
+    if (p.gold < offer.price) return { error: 'gold' };
+    p.gold -= offer.price;
+    own.shards += offer.qty;
+    p.shop.bought[slot]++;
+    this.save(id, p);
+    return { profile: p, card: offer.card, qty: offer.qty, cost: offer.price };
   }
 
   // ---------------------------------------------------------------- cards

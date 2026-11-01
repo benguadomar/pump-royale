@@ -47,11 +47,13 @@ export const ROAD_ARENAS = ARENAS;
 // ------------------------------------------------------------------ chests
 
 export const CHESTS = {
-  wooden: { name: 'Wooden Chest', unlock: 30, gold: [20, 40], cards: 6, weights: { Common: 90, Rare: 10, Epic: 0 } },
-  silver: { name: 'Silver Chest', unlock: 180, gold: [40, 80], cards: 12, weights: { Common: 75, Rare: 22, Epic: 3 } },
-  gold: { name: 'Golden Chest', unlock: 480, gold: [120, 200], cards: 28, weights: { Common: 65, Rare: 28, Epic: 7 } },
-  magical: { name: 'Magical Chest', unlock: 900, gold: [300, 450], cards: 60, weights: { Common: 55, Rare: 32, Epic: 13 } },
+  wooden: { name: 'Wooden Chest', unlock: 30, gold: [20, 40], cards: 6, weights: { Common: 90, Rare: 10, Epic: 0, Legendary: 0 } },
+  silver: { name: 'Silver Chest', unlock: 180, gold: [40, 80], cards: 12, weights: { Common: 75, Rare: 22, Epic: 3, Legendary: 0 } },
+  gold: { name: 'Golden Chest', unlock: 480, gold: [120, 200], cards: 28, weights: { Common: 65, Rare: 27, Epic: 7, Legendary: 1 } },
+  magical: { name: 'Magical Chest', unlock: 900, gold: [300, 450], cards: 60, weights: { Common: 54, Rare: 31, Epic: 12, Legendary: 3 } },
 };
+/** A chest stack of a rarer card holds proportionally fewer shards. */
+const STACK_DIVISOR = { Common: 1, Rare: 3, Epic: 6, Legendary: 12 };
 export const CHEST_SLOTS = 4;
 /** Wins hand out chests in this repeating order. */
 export const CHEST_CYCLE = ['wooden', 'wooden', 'silver', 'wooden', 'silver', 'wooden', 'gold', 'wooden', 'silver', 'wooden', 'silver', 'magical'];
@@ -254,8 +256,64 @@ export function rollChest(type, rand) {
     }
     const pool = byRarity[rarity] ?? byRarity.Common;
     const id = pool[Math.floor(rand() * pool.length)];
-    const base = Math.max(1, Math.round(def.cards / stacks / (rarity === 'Epic' ? 6 : rarity === 'Rare' ? 3 : 1)));
+    const base = Math.max(1, Math.round(def.cards / stacks / STACK_DIVISOR[rarity]));
     cards[id] = (cards[id] ?? 0) + base;
   }
   return { gold, cards };
+}
+
+// ------------------------------------------------------------------ shop
+
+/**
+ * Gold value of one shard. A Rare shard is ~6 Commons, an Epic ~40, a Legendary ~200: about
+ * how much scarcer each tier is in chests once you account for how many shards a level needs.
+ */
+export const SHARD_GOLD = { Common: 10, Rare: 60, Epic: 400, Legendary: 2000 };
+/** Hourly offers sell `qty` shards per purchase, at most `limit` purchases per hour. */
+export const SHOP_BUNDLE = { Common: { qty: 10, limit: 4 }, Rare: { qty: 4, limit: 3 }, Epic: { qty: 1, limit: 2 }, Legendary: { qty: 1, limit: 1 } };
+/** Rarity of each hourly slot; the last slot turns Legendary one hour in four. */
+export const SHOP_SLOTS = ['Common', 'Common', 'Common', 'Rare', 'Rare', 'Epic'];
+const LEGENDARY_HOUR_CHANCE = 0.25;
+/**
+ * Gem price of a chest bought from the shop (opened on the spot, no slot needed). Priced at
+ * ~5.7 (wooden) to ~7.5 (magical) gold-equivalent per gem of expected contents (gold + shards
+ * at SHARD_GOLD), so bigger chests are better value. Always far above gemsToOpen for a slot chest.
+ * Gem income is ~5–10 a day (quests + login calendar) plus the trophy road.
+ */
+export const CHEST_GEMS = { wooden: 18, silver: 40, gold: 110, magical: 270 };
+
+export const HOUR_MS = 3600 * 1000;
+export const hourKey = (now = Date.now()) => Math.floor(now / HOUR_MS);
+
+function hashSeed(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+
+function mulberry(seed) {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** The hourly card offers for one player: deterministic in (player id, UTC hour). */
+export function shopOffers(playerId, hour) {
+  const rand = mulberry(hashSeed(`${playerId}:${hour}`));
+  const pools = {};
+  for (const c of CARDS) (pools[c.rarity ?? 'Common'] ??= []).push(c.id);
+  const slots = [...SHOP_SLOTS];
+  if (pools.Legendary && rand() < LEGENDARY_HOUR_CHANCE) slots[slots.length - 1] = 'Legendary';
+  const offers = [];
+  for (const rarity of slots) {
+    const pool = pools[rarity];
+    if (!pool?.length) continue;
+    const card = pool.splice(Math.floor(rand() * pool.length), 1)[0];
+    const { qty, limit } = SHOP_BUNDLE[rarity];
+    offers.push({ card, rarity, qty, limit, price: qty * SHARD_GOLD[rarity] });
+  }
+  return offers;
 }

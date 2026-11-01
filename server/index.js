@@ -348,6 +348,12 @@ function handle(ws, msg) {
       return reply(ws, msg.t, economy.chestStart(id, Number(msg.slot) | 0));
     case 'chest-open':
       return reply(ws, msg.t, economy.chestOpen(id, Number(msg.slot) | 0, Boolean(msg.gems)));
+    case 'chest-buy':
+      return reply(ws, msg.t, economy.chestBuy(id, String(msg.type ?? '')));
+    case 'shop':
+      return reply(ws, msg.t, economy.shop(id));
+    case 'shop-buy':
+      return reply(ws, msg.t, economy.shopBuy(id, Number(msg.slot) | 0, Number(msg.hour) | 0));
     case 'upgrade':
       return reply(ws, msg.t, economy.upgrade(id, String(msg.card ?? '')));
     case 'daily-claim': {

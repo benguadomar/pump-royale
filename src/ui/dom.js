@@ -51,6 +51,7 @@ export const ICONS = {
   emote: `<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 3C6.5 3 2 6.6 2 11c0 2.4 1.3 4.5 3.4 6L4.5 21l4.3-2.4c1 .3 2.1.4 3.2.4 5.5 0 10-3.6 10-8s-4.5-8-10-8zm-4 9.3a1.3 1.3 0 1 1 0-2.6 1.3 1.3 0 0 1 0 2.6zm4 0a1.3 1.3 0 1 1 0-2.6 1.3 1.3 0 0 1 0 2.6zm4 0a1.3 1.3 0 1 1 0-2.6 1.3 1.3 0 0 1 0 2.6z"/></svg>`,
   wallet: `<svg viewBox="0 0 24 24"><path fill="currentColor" d="M21 7.3V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2.3A2 2 0 0 0 22 15V9a2 2 0 0 0-1-1.7zM20 15h-7V9h7zm-4-1.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/></svg>`,
   pencil: `<svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 17.3V21h3.7l11-11-3.7-3.7zM20.7 7a1 1 0 0 0 0-1.4l-2.3-2.3a1 1 0 0 0-1.4 0l-1.8 1.8 3.7 3.7z"/></svg>`,
+  shop: `<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 3h16l1.5 5a3 3 0 0 1-5 2.2 3 3 0 0 1-4.5 0 3 3 0 0 1-4.5 0A3 3 0 0 1 2.5 8zM4 12.4a4.6 4.6 0 0 0 3.5-.4 4.6 4.6 0 0 0 4.5 0 4.6 4.6 0 0 0 4.5 0 4.6 4.6 0 0 0 3.5.4V20a1 1 0 0 1-1 1h-4v-5h-5v5H5a1 1 0 0 1-1-1z"/></svg>`,
 };
 
 export function icon(name, cls = 'svg-icon') {
