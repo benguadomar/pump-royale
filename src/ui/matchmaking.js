@@ -36,7 +36,7 @@ export function openBattleMenu({ onRanked, onFriendlyCreate, onFriendlyJoin, onS
       closeModal();
       onFriendlyJoin(input.value);
     };
-    input.onkeydown = (e) => e.key === 'Enter' && join();
+    input.onkeydown = (e) => (e.stopPropagation(), e.key === 'Enter' && join());
     return [
       h('div', { class: 'bm-card inset' }, h('b', { class: 'title' }, 'FRIENDLY BATTLE'), h('p', { class: 'dim' }, 'Play a friend — no trophies at stake. Create a battle and share the code or link, or join theirs.')),
       h('button', { class: 'btn gold big-btn', onclick: () => (sfx.click(), closeModal(), onFriendlyCreate()) }, 'CREATE BATTLE'),

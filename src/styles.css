@@ -60,6 +60,13 @@ body {
   pointer-events: auto;
 }
 
+/* The page disables text selection; Safari then refuses typing unless inputs opt back in. */
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 img {
   -webkit-user-drag: none;
 }
