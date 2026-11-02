@@ -836,6 +836,47 @@ const UNIT_MODELS = {
     // The vest hugs the arms: keep it on the torso so its edges don't swing with them.
     grips: [{ bone: 'body', min: [-0.165, 0.1, -0.2], max: [0.165, 0.38, 0.2] }],
   },
+  barbarian: {
+    url: '/assets/models/barbarian.glb',
+    center: [-0.04, 0],
+    top: 0.98,
+    height: RIG_HEIGHT,
+    mirror: true,
+    bones: {
+      body: { parent: 'root', at: [-0.04, 0.2, 0], tip: [-0.04, 0.5, 0], r: 0.2 },
+      head: { parent: 'body', at: [-0.04, 0.55, 0], tip: [-0.04, 0.98, 0], r: 0.32 },
+      armR: { parent: 'body', at: [0.2, 0.47, 0], tip: [0.27, 0.4, 0.05], r: 0.07 },
+      foreR: { parent: 'armR', at: [0.27, 0.4, 0.05], tip: [0.3, 0.33, 0.12], r: 0.07 },
+      armL: { parent: 'body', at: [-0.26, 0.48, 0], tip: [-0.29, 0.36, 0], r: 0.07 },
+      foreL: { parent: 'armL', at: [-0.29, 0.36, 0], tip: [-0.31, 0.24, 0.02], r: 0.07 },
+      legR: { parent: 'root', at: [0.09, 0.2, 0], tip: [0.09, 0.1, 0], r: 0.07 },
+      shinR: { parent: 'legR', at: [0.09, 0.1, 0], tip: [0.1, 0, 0.02], r: 0.07 },
+      legL: { parent: 'root', at: [-0.16, 0.2, 0], tip: [-0.16, 0.1, 0], r: 0.07 },
+      shinL: { parent: 'legL', at: [-0.16, 0.1, 0], tip: [-0.17, 0, 0.02], r: 0.07 },
+    },
+    // Blade, guard and hilt ride rigidly on the sword hand.
+    grips: [{ bone: 'foreR', min: [0.25, 0.18, 0.02], max: [0.42, 0.84, 0.3] }],
+  },
+  archer: {
+    url: '/assets/models/archer.glb',
+    center: [0, -0.005],
+    top: 0.15,
+    height: RIG_HEIGHT,
+    bones: {
+      body: { parent: 'root', at: [0, 0.03, 0], tip: [0, 0.075, 0], r: 0.035 },
+      head: { parent: 'body', at: [0, 0.078, 0], tip: [0, 0.15, 0], r: 0.045 },
+      armL: { parent: 'body', at: [0.025, 0.075, 0], tip: [0.036, 0.064, 0.02], r: 0.012 },
+      foreL: { parent: 'armL', at: [0.036, 0.064, 0.02], tip: [0.044, 0.055, 0.035], r: 0.012 },
+      armR: { parent: 'body', at: [-0.03, 0.073, 0], tip: [-0.04, 0.062, 0.01], r: 0.012 },
+      foreR: { parent: 'armR', at: [-0.04, 0.062, 0.01], tip: [-0.049, 0.052, 0.02], r: 0.012 },
+      legL: { parent: 'root', at: [0.014, 0.032, 0], tip: [0.014, 0.016, 0], r: 0.013 },
+      shinL: { parent: 'legL', at: [0.014, 0.016, 0], tip: [0.014, 0, 0.003], r: 0.013 },
+      legR: { parent: 'root', at: [-0.015, 0.032, 0], tip: [-0.015, 0.016, 0], r: 0.013 },
+      shinR: { parent: 'legR', at: [-0.015, 0.016, 0], tip: [-0.015, 0, 0.003], r: 0.013 },
+    },
+    // The bow (held out in front, left hand) stays rigid on the bow arm; arrows leave from it.
+    grips: [{ bone: 'foreL', min: [0.01, 0, 0.03], max: [0.07, 0.15, 0.065] }],
+  },
   'hog-rider': {
     url: '/assets/models/hog-rider.glb',
     center: [-0.01, 0],
