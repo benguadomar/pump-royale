@@ -98,7 +98,7 @@ function readBody(req) {
   });
 }
 
-const AUTH_STATUS = { username: 400, password: 400, 'password-name': 400, taken: 409, credentials: 401 };
+const AUTH_STATUS = { username: 400, password: 400, 'password-name': 400, wallet: 400, taken: 409, credentials: 401 };
 
 async function api(req, res, urlPath, query) {
   const ip = firewall.ipOf(req);
@@ -109,7 +109,7 @@ async function api(req, res, urlPath, query) {
     const body = await readBody(req);
     const key = usernameKey(String(body.username ?? '').trim());
     if (!register && firewall.loginLocked(key)) return json(res, 423, { error: 'locked' });
-    const out = register ? await accounts.register(body.username, body.password, body.token) : await accounts.login(body.username, body.password);
+    const out = register ? await accounts.register(body.username, body.password, body.token, body.wallet) : await accounts.login(body.username, body.password);
     if (!register) out.error === 'credentials' ? firewall.loginFailed(key, ip) : firewall.loginSucceeded(key);
     if (out.error) return json(res, AUTH_STATUS[out.error] ?? 400, { error: out.error });
     log.info(register ? 'register' : 'login', { account: out.account.id, ip });
@@ -357,6 +357,8 @@ function handle(ws, msg) {
       return reply(ws, msg.t, economy.shopBuy(id, Number(msg.slot) | 0, Number(msg.hour) | 0));
     case 'upgrade':
       return reply(ws, msg.t, economy.upgrade(id, String(msg.card ?? '')));
+    case 'wallet-set':
+      return reply(ws, msg.t, accounts.setWallet(id, msg.wallet));
     case 'daily-claim': {
       const out = economy.claimDaily(id);
       reply(ws, msg.t, out);

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { signSession, verifySession, usernameError, passwordError, hashPassword, verifyPassword } from './auth.js';
 import { log } from './log.js';
+import { cleanSolanaAddress } from '../src/data/solana.js';
 
 const cleanId = (s) => String(s ?? '').replace(/[^a-zA-Z0-9-]/g, '').slice(0, 40);
 
@@ -15,9 +16,9 @@ export class Accounts {
     this.store = store;
   }
 
-  /** Public view of an account for its owner. */
+  /** View of an account for its owner (the wallet is never shown to other players). */
   view(a) {
-    return { id: a.id, username: a.username ?? null, guest: !a.username };
+    return { id: a.id, username: a.username ?? null, guest: !a.username, wallet: a.solana ?? null };
   }
 
   session(a) {
@@ -50,10 +51,13 @@ export class Accounts {
   }
 
   /** New username + password. Upgrades the caller's guest account in place when there is one. */
-  async register(username, password, guestToken) {
+  async register(username, password, guestToken, wallet) {
     const name = String(username ?? '').trim();
     const bad = usernameError(name) ?? passwordError(password, name);
     if (bad) return { error: bad };
+    // Optional Solana address for prize payouts; if given it must be a valid one.
+    const solana = String(wallet ?? '').trim() ? cleanSolanaAddress(wallet) : null;
+    if (String(wallet ?? '').trim() && !solana) return { error: 'wallet' };
     if (this.store.userByName(name)) return { error: 'taken' };
     const hash = await hashPassword(password);
     const guest = this.store.account(verifySession(guestToken));
@@ -61,11 +65,26 @@ export class Accounts {
     if (!(await this.store.createUser({ id, username: name, hash, created: Date.now() }))) return { error: 'taken' };
     const a = this.store.account(id) ?? this.create(id);
     a.username = name;
+    if (solana) a.solana = solana;
     a.tokenIssued = true;
     this.store.saveAccount(a);
     this.store.upsert(id, name, null);
     log.info('account registered', { account: id, upgraded: id === guest?.id });
     return this.session(a);
+  }
+
+  /** Sets (or clears, with an empty value) the account's Solana prize address. */
+  setWallet(id, raw) {
+    const a = this.store.account(id);
+    if (!a?.username) return { error: 'account' };
+    const empty = !String(raw ?? '').trim();
+    const solana = empty ? null : cleanSolanaAddress(raw);
+    if (!empty && !solana) return { error: 'wallet' };
+    if (solana) a.solana = solana;
+    else delete a.solana;
+    this.store.saveAccount(a);
+    log.info('wallet set', { account: id, cleared: empty });
+    return { account: this.view(a) };
   }
 
   async login(username, password) {
