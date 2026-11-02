@@ -166,9 +166,9 @@ export class Fx {
   /** Dust kicked up by a heavy footfall. */
   footstep(pos, size = 1) {
     for (let i = 0; i < 3; i++) {
-      this.spawn('smoke', { x: pos.x + rand(-0.2, 0.2) * size, y: 0.12, z: pos.z + rand(-0.2, 0.2) * size }, { size: 0.45 * size, life: rand(0.5, 0.8), vel: [rand(-0.6, 0.6), rand(0.2, 0.5), rand(-0.6, 0.6)], grow: 0.7 * size, drag: 3, tint: [0.82, 0.74, 0.62] });
+      this.spawn('smoke', { x: pos.x + rand(-0.2, 0.2) * size, y: (pos.y ?? 0) + 0.12, z: pos.z + rand(-0.2, 0.2) * size }, { size: 0.45 * size, life: rand(0.5, 0.8), vel: [rand(-0.6, 0.6), rand(0.2, 0.5), rand(-0.6, 0.6)], grow: 0.7 * size, drag: 3, tint: [0.82, 0.74, 0.62] });
     }
-    if (size > 1.2) this.spawn('ring', { x: pos.x, y: 0.07, z: pos.z }, { size: size * 1.1, life: 0.35, tint: [0.85, 0.78, 0.65] });
+    if (size > 1.2) this.spawn('ring', { x: pos.x, y: (pos.y ?? 0) + 0.07, z: pos.z }, { size: size * 1.1, life: 0.35, tint: [0.85, 0.78, 0.65] });
   }
 
   /** Dust trail of a troop being shoved backwards, thrown opposite to its slide. */

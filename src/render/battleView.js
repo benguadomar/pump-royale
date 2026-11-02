@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { uniform, uv, step, mix, color } from 'three/tsl';
-import { ARENA_W, ARENA_H, zoneAllows } from '../sim/constants.js';
+import { ARENA_W, ARENA_H, RIVER_Y, BRIDGES_X, zoneAllows } from '../sim/constants.js';
 import { CARD_BY_ID, SPEEDS, TOWERS, isSpell, LEVEL_BUFF } from '../data/cards.js';
 import { buildUnit, makeTowerObject, Animator, ghostify, flashMat, frozenMat, rageMat } from './models.js';
 import { tileToWorld } from './engine.js';
@@ -21,6 +21,16 @@ const DEATH_STYLE = { goblin: 'spin', giant: 'thud', pekka: 'thud', 'hog-rider':
 const FOOTFALL = { giant: [1.5, 0.55], pekka: [1.5, 0.5], 'hog-rider': [1.1, 0.45], barbarian: [0.7, 0.4] };
 
 const SILENT = new Proxy({}, { get: () => () => {} });
+
+/** The bridge decks built in world.js (tiles): plank top height, half extents, end ramp length. */
+const DECK = { top: 0.41, halfX: 1.09, halfY: 1.85, ramp: 0.45 };
+/** Ground height under a tile: troops walk up onto the bridge planks instead of through them. */
+function groundAt(x, y) {
+  const along = DECK.halfY - Math.abs(y - RIVER_Y);
+  if (along <= 0 || !BRIDGES_X.some((bx) => Math.abs(x - bx) < DECK.halfX)) return 0;
+  const k = Math.min(1, along / DECK.ramp);
+  return DECK.top * k * k * (3 - 2 * k);
+}
 
 const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const _v = new THREE.Vector3();
@@ -215,7 +225,7 @@ export class BattleView {
     model.root.rotation.y = facing;
     obj.add(blob, ring, model.root, bar);
     const blobSize = foot * 1.15;
-    obj.position.copy(tileToWorld(e.x, e.y));
+    obj.position.copy(tileToWorld(e.x, e.y, card.air ? 0 : groundAt(e.x, e.y)));
     this.group.add(obj);
     return {
       kind: e.kind,
@@ -392,7 +402,7 @@ export class BattleView {
   updateUnit(v, e, dt, t) {
     v.flash = Math.max(0, v.flash - dt);
     this.trackDamage(v, e, dt);
-    const pos = tileToWorld(e.x, e.y);
+    const pos = tileToWorld(e.x, e.y, v.card.air ? 0 : groundAt(e.x, e.y));
     // Hit-stop: the attacker and its victim hold their pose for a few frames on heavy blows.
     if (v.stop > 0) {
       v.stop -= dt;
@@ -424,7 +434,7 @@ export class BattleView {
         v.foot = -(v.foot ?? 1);
         const side = v.foot * 0.3 * foot[0];
         const yaw = v.model.root.rotation.y;
-        this.fx.footstep({ x: pos.x + side * Math.cos(yaw), y: 0, z: pos.z - side * Math.sin(yaw) }, foot[0]);
+        this.fx.footstep({ x: pos.x + side * Math.cos(yaw), y: pos.y, z: pos.z - side * Math.sin(yaw) }, foot[0]);
       }
     }
     if (!v.anim.engaged) v.aim = null;
