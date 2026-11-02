@@ -6,8 +6,10 @@ import { state } from '../state.js';
 import { sfx } from '../audio.js';
 import { leagueFor } from '../data/economy.js';
 
-const JOIN_ERRORS = { code: 'No battle with that code (it may have expired)', self: "That's your own code", deck: 'Your deck is not valid' };
+const JOIN_ERRORS = { code: 'No battle with that code (it may have expired)', self: "That's your own battle — your friend needs to join from their account", away: 'Your friend is reconnecting — try again in a moment', deck: 'Your deck is not valid' };
 export const inviteLink = (code) => `${location.origin}/?friend=${code}`;
+/** A typed code or a pasted invite link -> the 6-character code. */
+const cleanCode = (text) => (/[?&]friend=([^&#\s]+)/i.exec(text)?.[1] ?? text).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
 
 /**
  * The 1V1 menu: ranked matchmaking, friendly battles by code/link, and Pump TV (live top
@@ -29,7 +31,7 @@ export function openBattleMenu({ onRanked, onFriendlyCreate, onFriendlyJoin, onS
   };
 
   const friendly = () => {
-    const input = h('input', { class: 'code-input', maxLength: 6, placeholder: 'CODE', autocomplete: 'off', oninput: (e) => (e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '')) });
+    const input = h('input', { class: 'code-input', placeholder: 'CODE', autocomplete: 'off', spellcheck: false, oninput: (e) => (e.target.value = cleanCode(e.target.value)) });
     const join = () => {
       if (input.value.length !== 6) return toastMsg('Codes are 6 characters');
       sfx.click();

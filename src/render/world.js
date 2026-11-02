@@ -437,22 +437,32 @@ export function buildWorld(engine) {
   field.position.y = 0;
 
   // River banks: chunky grass-topped stone blocks, a few pebbles and lily pads.
+  // Stones are clipped to the same clearance at every bridge corner so both bridges sit
+  // identically in the banks (the RNG draws are unchanged so the rest of the diorama is too).
   const bankParts = [];
+  const BANK_GAP = 1.05;
+  const bridgeXs = BRIDGES_X.map((bx) => tileToWorld(bx, 0).x);
+  const clipToBanks = (a, b) =>
+    bridgeXs.reduce((pieces, g) => pieces.flatMap(([s, e]) => [[s, Math.min(e, g - BANK_GAP)], [Math.max(s, g + BANK_GAP), e]]).filter(([s, e]) => e - s > 0.06), [[a, b]]);
+  const bankStone = (s, e, hgt, cz, ry, side) => {
+    const stone = new THREE.BoxGeometry(e - s - 0.04, hgt, 0.36).rotateY(ry).translate((s + e) / 2, hgt / 2 - 0.02, cz);
+    bankParts.push(gradient(tint(stone, PALETTE.bankStone, null, SURF.rock), 0, hgt, 0.72, 1.05));
+    const grass = new THREE.BoxGeometry(e - s + 0.02, 0.08, 0.42).rotateY(ry).translate((s + e) / 2, hgt + 0.03, cz + side * 0.02);
+    bankParts.push(tint(grass, PALETTE.bankGrass, null, SURF.grass));
+  };
   for (const side of [-1, 1]) {
     for (let x = -ARENA_W / 2; x < ARENA_W / 2 - 0.2; ) {
       const len = Math.min(0.85 + r() * 0.5, ARENA_W / 2 - x);
-      const underBridge = BRIDGES_X.some((bx) => Math.abs(x + len / 2 - tileToWorld(bx, 0).x) < 1.05 + len / 2);
+      const underBridge = bridgeXs.some((g) => Math.abs(x + len / 2 - g) < BANK_GAP + len / 2);
       if (underBridge) {
+        for (const [s, e] of clipToBanks(x, x + len)) bankStone(s, e, 0.33, side * (RIVER_HALF + 0.155), 0, side);
         x += len;
         continue;
       }
       const hgt = 0.3 + r() * 0.07;
       const cz = side * (RIVER_HALF + 0.14 + r() * 0.03);
       const ry = (r() - 0.5) * 0.06;
-      const stone = new THREE.BoxGeometry(len - 0.04, hgt, 0.36).rotateY(ry).translate(x + len / 2, hgt / 2 - 0.02, cz);
-      bankParts.push(gradient(tint(stone, PALETTE.bankStone, null, SURF.rock), 0, hgt, 0.72, 1.05));
-      const grass = new THREE.BoxGeometry(len + 0.02, 0.08, 0.42).rotateY(ry).translate(x + len / 2, hgt + 0.03, cz + side * 0.02);
-      bankParts.push(tint(grass, PALETTE.bankGrass, null, SURF.grass));
+      bankStone(x, x + len, hgt, cz, ry, side);
       if (r() < 0.18) bankParts.push(...boulder(r, x + r() * len, hgt, cz - side * 0.18, 0.09 + r() * 0.06, 0));
       x += len;
     }

@@ -19,6 +19,8 @@ const MAX_GAME_CHAT = 120;
 const MAX_SPECTATORS = 50;
 const REMATCH_WINDOW_MS = 30000;
 const FRIENDLY_TTL_MS = 15 * 60 * 1000;
+/** A host whose connection drops (e.g. a phone switching apps to share the link) keeps its code this long. */
+const FRIENDLY_RECONNECT_MS = 60000;
 const MATCH_WINDOW_BASE = 100;
 const MATCH_WINDOW_PER_S = 50;
 const MATCH_WINDOW_MAX = 4000;
@@ -65,7 +67,7 @@ class Room {
   }
 
   sendWs(ws, msg) {
-    if (ws?.readyState === ws?.OPEN) ws.send(JSON.stringify(msg));
+    if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
   }
 
   send(team, msg) {
@@ -316,11 +318,15 @@ export class Matchmaker {
     this.broadcastQueue();
   }
 
-  leave(ws) {
+  leave(ws, { keepFriendly = false } = {}) {
     const before = this.queue.length;
     this.queue = this.queue.filter((q) => q.ws !== ws && q.ws.player?.id !== ws.player?.id);
     if (this.queue.length !== before) this.broadcastQueue();
-    for (const [code, f] of this.friendlies) if (f.ws === ws) this.friendlies.delete(code);
+    for (const [code, f] of this.friendlies) {
+      if (f.ws !== ws) continue;
+      if (keepFriendly) f.lostAt = Date.now();
+      else this.friendlies.delete(code);
+    }
   }
 
   broadcastQueue() {
@@ -361,7 +367,11 @@ export class Matchmaker {
         this.createRoom([a, b], 'ranked');
       }
     }
-    for (const [code, f] of this.friendlies) if (now - f.created > FRIENDLY_TTL_MS || f.ws.readyState !== f.ws.OPEN) this.friendlies.delete(code);
+    for (const [code, f] of this.friendlies) {
+      if (f.ws.readyState !== f.ws.OPEN) f.lostAt ??= now;
+      else f.lostAt = null;
+      if (now - f.created > FRIENDLY_TTL_MS || (f.lostAt && now - f.lostAt > FRIENDLY_RECONNECT_MS)) this.friendlies.delete(code);
+    }
     for (const [id, r] of this.recent) if (now - r.endedAt > REMATCH_WINDOW_MS) this.recent.delete(id);
     if (this.queue.length) this.broadcastQueue();
   }
@@ -392,13 +402,18 @@ export class Matchmaker {
 
   // ---------------------------------------------------------------- friendly battles
 
+  /** Creates a code, or hands back the one this player already shared if they just reconnected. */
   friendlyCreate(ws, deck) {
     if (!ws.player || !isValidDeck(deck)) return { error: 'deck' };
+    const id = ws.player.id;
     this.leave(ws);
-    let code;
-    do code = newCode();
-    while (this.friendlies.has(code));
-    this.friendlies.set(code, { ws, deck, created: Date.now() });
+    let code = [...this.friendlies].find(([, f]) => f.id === id && f.ws.readyState !== f.ws.OPEN)?.[0];
+    if (code) Object.assign(this.friendlies.get(code), { ws, deck, lostAt: null });
+    else {
+      do code = newCode();
+      while (this.friendlies.has(code));
+      this.friendlies.set(code, { id, ws, deck, created: Date.now(), lostAt: null });
+    }
     return { code };
   }
 
@@ -406,8 +421,10 @@ export class Matchmaker {
     if (!ws.player || !isValidDeck(deck)) return { error: 'deck' };
     const key = String(code ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
     const host = this.friendlies.get(key);
-    if (!host || host.ws.readyState !== host.ws.OPEN) return { error: 'code' };
-    if (host.ws === ws) return { error: 'self' };
+    if (!host) return { error: 'code' };
+    // Same account (another tab or device): a room needs two different players.
+    if (host.id === ws.player.id) return { error: 'self' };
+    if (host.ws.readyState !== host.ws.OPEN) return { error: 'away' };
     this.friendlies.delete(key);
     this.leave(ws);
     this.createRoom([host, { ws, deck }], 'friendly');
@@ -463,7 +480,7 @@ export class Matchmaker {
   }
 
   disconnected(ws) {
-    this.leave(ws);
+    this.leave(ws, { keepFriendly: true });
     this.stopSpectating(ws);
     this.roomOf(ws)?.disconnected(ws);
   }
