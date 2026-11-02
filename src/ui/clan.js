@@ -7,7 +7,9 @@ import { sfx } from '../audio.js';
 import { CARDS, CARD_BY_ID, cardImg } from '../data/cards.js';
 
 const REQUESTABLE = new Set(['Common', 'Rare', 'Epic']);
-const ERRORS = { 'in-clan': 'Leave your clan first', name: 'Clan names need 3+ characters', taken: 'That name is taken', gold: 'Creating a clan costs 100 gold', full: 'That clan is full', cooldown: 'You can request again later', shards: "You don't have a spare copy", limit: 'Donation limit reached for this request', own: "That's your own request" };
+const ERRORS = { 'in-clan': 'Leave your clan first', name: 'Clan names need 3+ characters', taken: 'That name is taken', gold: 'Creating a clan costs 100 gold', full: 'That clan is full', cooldown: 'You can request again later', shards: "You don't have a spare copy", limit: 'Donation limit reached for this request', own: "That's your own request", busy: 'That clan has too many pending requests', leader: 'Only the leader can do that', player: 'No player with that username', 'player-in-clan': 'That player is already in a clan', request: 'That request is gone' };
+const TYPE_LABEL = { open: 'Open · free to join', invite: 'Invite only' };
+const typePill = (type = 'open') => h('span', { class: `clan-type ${type}` }, type === 'invite' ? '🔒 Invite only' : '🟢 Open');
 
 const badge = (i, big) => h('span', { class: `clan-badge${big ? ' big' : ''}`, style: { background: BADGE_COLORS[i % BADGE_COLORS.length] } });
 const timeAgo = (ts) => {
@@ -21,38 +23,64 @@ function clanError(res) {
 
 export function openClan() {
   const body = h('div', { class: 'clan-body' });
-  let tab = 'find';
+  let tab = 'top';
   let query = '';
+  /** Members can browse other clans too (without joining). */
+  let browsing = false;
 
-  const render = () => body.replaceChildren(...(net.clan ? clanView(net.clan) : browseView()).filter(Boolean));
+  const render = () => body.replaceChildren(...(net.clan && !browsing ? clanView(net.clan) : browseView()).filter(Boolean));
 
   // ---------------------------------------------------------------- not in a clan
   function browseView() {
-    const tabs = h('div', { class: 'battle-tabs' }, ['find', 'create', 'top'].map((t) => h('button', { class: `btn chip${tab === t ? ' on' : ''}`, onclick: () => (sfx.click(), (tab = t), render()) }, { find: 'FIND A CLAN', create: 'CREATE', top: '🏆 TOP CLANS' }[t])));
-    if (tab === 'create') return [tabs, createForm()];
+    const names = { top: '🏆 TOP CLANS', find: 'SEARCH', create: 'CREATE' };
+    const tabs = h(
+      'div',
+      { class: 'battle-tabs' },
+      (net.clan ? ['top', 'find'] : ['top', 'find', 'create']).map((t) => h('button', { class: `btn chip${tab === t ? ' on' : ''}`, onclick: () => (sfx.click(), (tab = t), render()) }, names[t])),
+      net.clan && h('button', { class: 'btn chip', onclick: () => (sfx.click(), (browsing = false), render()) }, `← ${net.clan.name}`),
+    );
+    if (tab === 'create' && !net.clan) return [tabs, createForm()];
+    const invites = h('div', { class: 'clan-invites' });
     const list = h('div', { class: 'clan-list scroll' }, h('div', { class: 'dim' }, 'Loading…'));
     const search = h('input', { class: 'email-input', placeholder: 'Search by name or #TAG', value: query });
+    const row = (c, i) =>
+      h(
+        'div',
+        { class: `clan-row inset${c.invited ? ' invited' : ''}` },
+        tab === 'top' && i != null && h('b', { class: 'rank' }, `#${i + 1}`),
+        badge(c.badge),
+        h('div', { class: 'clan-info' }, h('b', {}, c.name, ' ', typePill(c.type)), h('small', { class: 'dim' }, `#${c.tag} · ${c.members}/30 members`), c.desc && h('small', {}, c.desc)),
+        h('span', { class: 'clan-troph' }, img('/assets/ui/icon-trophy.png'), c.trophies),
+        !net.clan && joinButton(c),
+      );
     const run = () => {
-      query = search.value;
-      const req = tab === 'top' ? Promise.resolve({ list: net.leaderboard.clans ?? [] }) : net.request({ t: 'clan-list', q: query }, 'clan-list');
-      req.then((m) => {
-        const rows = (m?.list ?? []).map((c, i) =>
-          h(
-            'div',
-            { class: 'clan-row inset' },
-            tab === 'top' && h('b', { class: 'rank' }, `#${i + 1}`),
-            badge(c.badge),
-            h('div', { class: 'clan-info' }, h('b', {}, c.name), h('small', { class: 'dim' }, `#${c.tag} · ${c.members}/30 members`), c.desc && h('small', {}, c.desc)),
-            h('span', { class: 'clan-troph' }, img('/assets/ui/icon-trophy.png'), c.trophies),
-            h('button', { class: 'btn gold', onclick: async () => clanError(await joinClan(c.id)) }, 'Join'),
-          ),
-        );
+      query = tab === 'find' ? search.value : '';
+      net.request({ t: 'clan-list', q: query }, 'clan-list').then((m) => {
+        const rows = (m?.list ?? []).map((c, i) => row(c, i));
         list.replaceChildren(...(rows.length ? rows : [h('div', { class: 'empty inset' }, tab === 'top' ? 'No clans yet — create the first one!' : 'No clans found.')]));
+        const inv = net.clan ? [] : m?.invites ?? [];
+        invites.replaceChildren(...(inv.length ? [h('div', { class: 'section-title' }, '✉ INVITATIONS'), ...inv.map((c) => row(c))] : []));
       });
     };
     search.onkeydown = (e) => e.key === 'Enter' && run();
     run();
-    return [tabs, tab === 'find' && h('div', { class: 'account-row' }, search, h('button', { class: 'btn', onclick: run }, 'Search')), list];
+    return [tabs, invites, tab === 'find' && h('div', { class: 'account-row' }, search, h('button', { class: 'btn', onclick: run }, 'Search')), list];
+  }
+
+  function joinButton(c) {
+    if (c.members >= 30) return h('button', { class: 'btn', disabled: true }, 'Full');
+    if (c.invited) return h('button', { class: 'btn gold', onclick: async () => clanError(await joinClan(c.id)) }, 'Accept invite');
+    if (c.type === 'invite') {
+      const btn = h('button', { class: 'btn', disabled: c.asked, onclick: async () => {
+        const res = await joinClan(c.id);
+        if (res?.pending) {
+          btn.disabled = true;
+          btn.textContent = 'Requested';
+        } else clanError(res);
+      } }, c.asked ? 'Requested' : 'Ask to join');
+      return btn;
+    }
+    return h('button', { class: 'btn gold', onclick: async () => clanError(await joinClan(c.id)) }, 'Join');
   }
 
   async function joinClan(id) {
@@ -62,12 +90,16 @@ export function openClan() {
       net.clan = res.clan;
       render();
       toastMsg(`Welcome to ${res.clan.name}!`);
-    }
+    } else if (res?.pending) toastMsg('Request sent — the leader will decide');
     return res;
   }
 
   function createForm() {
     let pick = 0;
+    let type = 'open';
+    const typeRow = h('div', { class: 'battle-tabs' });
+    const drawType = () => typeRow.replaceChildren(...['open', 'invite'].map((t) => h('button', { class: `btn chip${type === t ? ' on' : ''}`, onclick: () => (sfx.click(), (type = t), drawType()) }, TYPE_LABEL[t])));
+    drawType();
     const name = h('input', { class: 'email-input', maxLength: 20, placeholder: 'Clan name' });
     const desc = h('input', { class: 'email-input', maxLength: 120, placeholder: 'Description (optional)' });
     const badges = h('div', { class: 'badge-pick' });
@@ -80,11 +112,13 @@ export function openClan() {
       desc,
       h('div', { class: 'dim' }, 'Badge'),
       badges,
+      h('div', { class: 'dim' }, 'Who can join'),
+      typeRow,
       h('button', {
         class: 'btn gold',
         onclick: async () => {
           sfx.click();
-          const res = await net.request({ t: 'clan-create', name: name.value, desc: desc.value, badge: pick }, 'econ', { op: 'clan-create' });
+          const res = await net.request({ t: 'clan-create', name: name.value, desc: desc.value, badge: pick, type }, 'econ', { op: 'clan-create' });
           if (res?.clan) {
             net.clan = res.clan;
             render();
@@ -153,8 +187,9 @@ export function openClan() {
         'div',
         { class: 'clan-head inset' },
         badge(c.badge, true),
-        h('div', { class: 'clan-info' }, h('b', { class: 'title' }, c.name), h('small', { class: 'dim' }, `#${c.tag} · ${c.members.length}/30 · ${c.desc || 'No description'}`)),
+        h('div', { class: 'clan-info' }, h('b', { class: 'title' }, c.name, ' ', typePill(c.type)), h('small', { class: 'dim' }, `#${c.tag} · ${c.members.length}/30 · ${c.desc || 'No description'}`)),
         h('span', { class: 'clan-troph' }, img('/assets/ui/icon-trophy.png'), c.trophies),
+        h('button', { class: 'btn small-btn', onclick: () => (sfx.click(), (browsing = true), (tab = 'top'), render()) }, 'Browse clans'),
         h('button', {
           class: 'btn small-btn',
           onclick: async () => {
@@ -167,8 +202,39 @@ export function openClan() {
           },
         }, 'Leave'),
       ),
+      c.role === 'leader' && leaderPanel(c),
       h('div', { class: 'clan-cols' }, h('div', { class: 'clan-col' }, h('div', { class: 'section-title' }, 'MEMBERS'), members), h('div', { class: 'clan-col wide' }, h('div', { class: 'section-title' }, 'CLAN CHAT & REQUESTS'), feed, h('div', { class: 'account-row' }, input, h('button', { class: 'btn', onclick: sendMsg }, 'Send'), requestBtn))),
     ];
+  }
+
+  /** Leader tools: who may join, invitations by username, pending join requests. */
+  function leaderPanel(c) {
+    const send = async (msg) => {
+      sfx.click();
+      const res = await net.request(msg, 'econ', { op: msg.t });
+      clanError(res);
+      return res;
+    };
+    const types = ['open', 'invite'].map((t) => h('button', { class: `btn chip${(c.type ?? 'open') === t ? ' on' : ''}`, onclick: () => send({ t: 'clan-settings', type: t }) }, TYPE_LABEL[t]));
+    const who = h('input', { class: 'email-input', maxLength: 16, placeholder: 'Invite by username', onkeydown: (e) => (e.stopPropagation(), e.key === 'Enter' && inviteBtn.click()) });
+    const inviteBtn = h('button', { class: 'btn', onclick: async () => {
+      if (!who.value.trim()) return;
+      const res = await send({ t: 'clan-invite', name: who.value.trim() });
+      if (res && !res.error) {
+        toastMsg(`Invitation sent to ${who.value.trim()}`);
+        who.value = '';
+      }
+    } }, 'Invite');
+    const pending = (c.joinRequests ?? []).map((j) =>
+      h('div', { class: 'join-req inset' }, h('b', {}, rankTag(j.name), j.name), h('span', { class: 'member-troph' }, img('/assets/ui/icon-trophy.png'), j.trophies), h('button', { class: 'btn gold', onclick: () => send({ t: 'clan-answer', player: j.id, accept: true }) }, 'Accept'), h('button', { class: 'btn', onclick: () => send({ t: 'clan-answer', player: j.id, accept: false }) }, 'Decline')),
+    );
+    return h(
+      'div',
+      { class: 'clan-leader inset' },
+      h('div', { class: 'leader-row' }, h('span', { class: 'dim' }, 'Who can join:'), ...types),
+      h('div', { class: 'account-row' }, who, inviteBtn),
+      pending.length ? [h('div', { class: 'section-title' }, `JOIN REQUESTS (${pending.length})`), ...pending] : null,
+    );
   }
 
   function openRequestPicker() {
@@ -193,6 +259,7 @@ export function openClan() {
   }
 
   render();
-  const off = net.on('clan', () => render());
+  const offs = [net.on('clan', () => render()), net.on('clan-invite', () => !net.clan && render())];
+  const off = () => offs.forEach((o) => o());
   openModal({ cls: 'clan-modal', title: 'CLAN', body, onClose: () => off() });
 }

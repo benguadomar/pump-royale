@@ -58,6 +58,7 @@ const clans = new Clans(store, economy, {
   notify: (ids, msg) => ids.forEach((id) => sockets.get(id)?.forEach((ws) => send(ws, msg))),
   isOnline: (id) => Boolean(sockets.get(id)?.size),
   nameOf: (id) => store.get(id)?.name ?? 'Player',
+  idByName: (name) => store.userByName(name)?.id ?? null,
 });
 
 // ---------- HTTP ----------
@@ -417,7 +418,7 @@ function handle(ws, msg) {
 
     // ---- clans
     case 'clan-list':
-      return send(ws, { t: 'clan-list', list: clans.list(msg.q) });
+      return send(ws, { t: 'clan-list', list: clans.list(msg.q, id), invites: clans.invitesFor(id) });
     case 'clan-create':
       return reply(ws, msg.t, clans.create(id, msg));
     case 'clan-join':
@@ -431,6 +432,12 @@ function handle(ws, msg) {
       ws.lastChat = now;
       return clans.chat(id, text);
     }
+    case 'clan-answer':
+      return reply(ws, msg.t, clans.answer(id, String(msg.player ?? ''), Boolean(msg.accept)));
+    case 'clan-invite':
+      return reply(ws, msg.t, clans.invite(id, msg.name));
+    case 'clan-settings':
+      return reply(ws, msg.t, clans.settings(id, { type: msg.type, desc: msg.desc }));
     case 'clan-request':
       return reply(ws, msg.t, clans.request(id, String(msg.card ?? '')));
     case 'clan-donate':

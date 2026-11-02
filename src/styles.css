@@ -3783,3 +3783,44 @@ button.res-pill:hover {
   color: #7fe07a;
   font-weight: 900;
 }
+
+/* clan types, invitations and leader tools */
+.clan-type {
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 800;
+  vertical-align: 2px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #b9f0a8;
+}
+.clan-type.invite {
+  color: #ffd27a;
+}
+.clan-row.invited {
+  border: 2px solid var(--gold-1);
+}
+.clan-invites .section-title {
+  margin: 0 0 6px;
+}
+.clan-leader {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.leader-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.join-req {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+}
