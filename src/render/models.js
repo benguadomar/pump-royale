@@ -857,6 +857,30 @@ const UNIT_MODELS = {
     },
     grips: [{ bone: 'foreR', min: [0.22, 0.95, 0.09], max: [0.6, 1.5, 0.45] }],
   },
+  skeleton: {
+    url: '/assets/models/skeleton.glb',
+    center: [-0.025, -0.015],
+    top: 0.398,
+    height: RIG_HEIGHT,
+    mirror: true,
+    bones: {
+      body: { parent: 'root', at: [-0.025, 0.09, -0.02], tip: [-0.025, 0.2, -0.02], r: 0.07 },
+      head: { parent: 'body', at: [-0.03, 0.21, -0.01], tip: [-0.03, 0.39, -0.01], r: 0.1 },
+      armR: { parent: 'body', at: [0.035, 0.205, -0.02], tip: [0.06, 0.16, -0.01], r: 0.025 },
+      foreR: { parent: 'armR', at: [0.06, 0.16, -0.01], tip: [0.09, 0.17, 0.015], r: 0.025 },
+      armL: { parent: 'body', at: [-0.085, 0.2, -0.025], tip: [-0.115, 0.155, -0.03], r: 0.025 },
+      foreL: { parent: 'armL', at: [-0.115, 0.155, -0.03], tip: [-0.13, 0.08, -0.013], r: 0.025 },
+      legR: { parent: 'root', at: [0.03, 0.1, -0.02], tip: [0.03, 0.05, -0.02], r: 0.025 },
+      shinR: { parent: 'legR', at: [0.03, 0.05, -0.02], tip: [0.03, 0, -0.02], r: 0.025 },
+      legL: { parent: 'root', at: [-0.08, 0.1, -0.02], tip: [-0.08, 0.05, -0.02], r: 0.025 },
+      shinL: { parent: 'legL', at: [-0.08, 0.05, -0.02], tip: [-0.08, 0, -0.02], r: 0.025 },
+    },
+    // Blade and guard, then the hilt and pommel in the fist.
+    grips: [
+      { bone: 'foreR', min: [0.062, 0.2, -0.04], max: [0.16, 0.35, 0.08] },
+      { bone: 'foreR', min: [0.07, 0.12, -0.03], max: [0.12, 0.2, 0.05] },
+    ],
+  },
 };
 /** Per card: { geo (skinned, rig units), mat, tints, bones: [{ name, parent, offset }], footprint }. */
 const unitModels = {};
