@@ -816,6 +816,26 @@ const UNIT_MODELS = {
       { bone: 'foreR', min: [-0.37, 0.17, 0.02], max: [-0.24, 0.42, 0.18] },
     ],
   },
+  giant: {
+    url: '/assets/models/giant.glb',
+    center: [0, 0.01],
+    top: 0.596,
+    height: RIG_HEIGHT,
+    bones: {
+      body: { parent: 'root', at: [0, 0.1, 0.01], tip: [0, 0.36, 0], r: 0.24 },
+      head: { parent: 'body', at: [0, 0.37, 0], tip: [0, 0.6, 0], r: 0.22 },
+      armL: { parent: 'body', at: [0.19, 0.32, 0], tip: [0.21, 0.22, 0.01], r: 0.05 },
+      foreL: { parent: 'armL', at: [0.21, 0.22, 0.01], tip: [0.21, 0.1, 0.03], r: 0.05 },
+      armR: { parent: 'body', at: [-0.19, 0.32, 0], tip: [-0.21, 0.22, 0.01], r: 0.05 },
+      foreR: { parent: 'armR', at: [-0.21, 0.22, 0.01], tip: [-0.21, 0.1, 0.03], r: 0.05 },
+      legL: { parent: 'root', at: [0.095, 0.1, 0.02], tip: [0.095, 0.05, 0.02], r: 0.07 },
+      shinL: { parent: 'legL', at: [0.095, 0.05, 0.02], tip: [0.095, 0, 0.03], r: 0.07 },
+      legR: { parent: 'root', at: [-0.095, 0.1, 0.02], tip: [-0.095, 0.05, 0.02], r: 0.07 },
+      shinR: { parent: 'legR', at: [-0.095, 0.05, 0.02], tip: [-0.095, 0, 0.03], r: 0.07 },
+    },
+    // The vest hugs the arms: keep it on the torso so its edges don't swing with them.
+    grips: [{ bone: 'body', min: [-0.165, 0.1, -0.2], max: [0.165, 0.38, 0.2] }],
+  },
   'hog-rider': {
     url: '/assets/models/hog-rider.glb',
     center: [-0.01, 0],
