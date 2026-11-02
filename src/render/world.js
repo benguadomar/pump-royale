@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ARENA_W, ARENA_H, RIVER_Y, RIVER_HALF, BRIDGES_X, TOWER_LAYOUT } from '../sim/constants.js';
 import { fieldColor, fieldNormal, riverColor, riverNormal, surfaceColor, surfaceRoughness, surfaceMetalness, windPosition, cloudPosition, cloudColor, SURF } from './shaders.js';
 import { makeTowerObject, makeSurfaceMaterial } from './models.js';
+import { placeHouse } from './houses.js';
 
 const tileToWorld = (x, y, h = 0) => new THREE.Vector3(x - ARENA_W / 2, h, ARENA_H / 2 - y);
 
@@ -593,19 +594,27 @@ export function buildWorld(engine) {
       return null;
     };
     const main = blobs[0];
+    // Sculpted buildings take the procedural ones' spots when loaded (which still draw the same randoms).
+    const homes = [];
+    const build = (kind, made, p, y, s, face) => {
+      const model = placeHouse(kind, p.x, y, p.z, s, face);
+      if (model) homes.push(model);
+      else parts.push(...made);
+    };
+    const cottageAt = (b, p, s, face, roof) => build(roof === PALETTE.roofBlue ? 'blue' : 'red', cottage(r, p.x, b.top, p.z, s, face, roof), p, b.top, s, face);
     if (spot.kind === 'village') {
       const t = spotOn(main, 0.1, 0.35, 1.5);
-      if (t) parts.push(...roundTower(r, t.x, main.top, t.z, 0.95, PALETTE.roofRed));
+      if (t) build('tower', roundTower(r, t.x, main.top, t.z, 0.95, PALETTE.roofRed), t, main.top, 0.95, Math.atan2(-t.x, -t.z) + Math.PI);
       for (const roof of [PALETTE.roofBlue, PALETTE.roofRed]) {
         const p = spotOn(main, 0.35, 0.6, 1.7);
-        if (p) parts.push(...cottage(r, p.x, main.top, p.z, 0.85, Math.atan2(-p.x, -p.z) + Math.PI, roof));
+        if (p) cottageAt(main, p, 0.85, Math.atan2(-p.x, -p.z) + Math.PI, roof);
       }
       const extra = blobs[1 + Math.floor(r() * (blobs.length - 1))];
       const p = spotOn(extra, 0, 0.3, 1.6);
-      if (p) parts.push(...cottage(r, p.x, extra.top, p.z, 0.8, r() * Math.PI * 2, r() < 0.5 ? PALETTE.roofBlue : PALETTE.roofRed));
+      if (p) cottageAt(extra, p, 0.8, r() * Math.PI * 2, r() < 0.5 ? PALETTE.roofBlue : PALETTE.roofRed);
     } else if (spot.kind === 'hamlet') {
       const p = spotOn(main, 0, 0.25, 1.7);
-      if (p) parts.push(...cottage(r, p.x, main.top, p.z, 0.8, r() * Math.PI * 2, r() < 0.5 ? PALETTE.roofBlue : PALETTE.roofRed));
+      if (p) cottageAt(main, p, 0.8, r() * Math.PI * 2, r() < 0.5 ? PALETTE.roofBlue : PALETTE.roofRed);
     } else if (spot.kind === 'islet') {
       // One building per islet, facing the arena: mostly cottages, now and then a tower.
       const p = spotOn(main, 0, 0.12, 1.2);
@@ -627,6 +636,7 @@ export function buildWorld(engine) {
     }
 
     const mesh = mergedMesh(parts);
+    if (homes.length) mesh.add(...homes);
     const islandTufts = [];
     for (const b of blobs) {
       for (let i = 0; i < b.rad * 8; i++) {

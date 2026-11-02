@@ -8,6 +8,7 @@ import { d, std } from 'typegpu';
 import { ARENA_W, ARENA_H } from '../sim/constants.js';
 import { skyColor, envSkyColor, applyTheme } from './shaders.js';
 import { buildWorld } from './world.js';
+import { loadHouseModels } from './houses.js';
 import { Fx } from './fx.js';
 import { buildChest } from './models.js';
 import { state } from '../state.js';
@@ -39,6 +40,8 @@ const BATTLE_FOV = 46;
  */
 export class Engine {
   static async create(canvas) {
+    // The world places sculpted houses as it is built (procedural ones if this fails).
+    await loadHouseModels().catch((e) => console.warn('house models', e));
     const engine = new Engine(canvas);
     await engine.renderer.init();
     engine.buildEnvironment();

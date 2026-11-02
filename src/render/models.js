@@ -776,6 +776,7 @@ export function buildUnit(cardId, team) {
     footprint: (sculpt ? sculpt.footprint : t.footprint) * scale,
     launch: t.launch ? rig.groups[t.launch] : null,
     base: sculpt ? {} : t.base ?? {},
+    recoil: sculpt?.recoil ?? 0.28,
     mount: !!t.mount,
     air: !!t.air,
   };
@@ -922,6 +923,26 @@ const UNIT_MODELS = {
       { bone: 'foreR', min: [0.07, 0.12, -0.03], max: [0.12, 0.2, 0.05] },
     ],
   },
+  // Mortar-like gun on a wooden carriage with its gunner behind; the barrel recoils on its own bone.
+  cannon: {
+    url: '/assets/models/cannon.glb',
+    center: [0.003, 0],
+    top: 0.999,
+    height: RIG_HEIGHT,
+    recoil: 0.1,
+    bones: {
+      carriage: { parent: 'root', at: [0, 0.05, 0.05], tip: [0, 0.35, 0], r: 0.3 },
+      barrel: { parent: 'carriage', at: [0, 0.42, -0.12], tip: [0, 0.84, 0.42], r: 0.2 },
+      muzzle: { parent: 'barrel', at: [0, 0.84, 0.47], tip: [0, 0.84, 0.47], r: 0.0001 },
+      body: { parent: 'root', at: [0, 0.1, -0.33], tip: [0, 0.5, -0.33], r: 0.22 },
+      head: { parent: 'body', at: [0, 0.6, -0.35], tip: [0, 0.85, -0.35], r: 0.19 },
+    },
+    // Muzzle end, then the breech between the carriage cheeks (with the gunner's hands on it).
+    grips: [
+      { bone: 'barrel', min: [-0.25, 0.55, 0.05], max: [0.25, 1.0, 0.6] },
+      { bone: 'barrel', min: [-0.13, 0.3, -0.25], max: [0.13, 0.6, 0.3] },
+    ],
+  },
 };
 /** Per card: { geo (skinned, rig units), mat, tints, bones: [{ name, parent, offset }], footprint }. */
 const unitModels = {};
@@ -1031,6 +1052,7 @@ async function loadUnitModels() {
         mat,
         tints,
         footprint: footprintOf(geo) * 0.8,
+        recoil: def.recoil,
         bones: bones.map((b) => {
           const pp = b.parent === 'root' ? new THREE.Vector3() : at[b.parent];
           return { name: b.name, parent: b.parent, offset: at[b.name].clone().sub(pp) };
@@ -1679,7 +1701,7 @@ export class Animator {
     for (const [n, a, v] of this.pose.hold) add(n, a, v * engaged);
     for (const [n, a, v] of this.pose.windup) add(n, a, v * W);
     for (const [n, a, v] of this.pose.impact) add(n, a, v * I);
-    if (g.barrel) g.barrel.position.z = this.barrelZ - I * 0.28;
+    if (g.barrel) g.barrel.position.z = this.barrelZ - I * (this.m.recoil ?? 0.28);
     if (this.m.style === 'spin' && tau < 0.45 && g.body) g.body.rotation.y += smooth(tau / 0.45) * Math.PI * 2;
     if (g.wingL) {
       const flap = Math.sin(t * 13 + this.seed) * 0.65;
