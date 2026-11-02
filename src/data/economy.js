@@ -62,11 +62,17 @@ export const gemsToOpen = (secondsLeft) => Math.max(1, Math.ceil(secondsLeft / 6
 
 // ------------------------------------------------------------------ cards
 
-export const START_LEVEL = 9;
+export const START_LEVEL = 1;
 export const MAX_CARD_LEVEL = 14;
 /** Shards needed to go from level L to L+1 (index = L - START_LEVEL). */
-const SHARDS = { Common: [4, 10, 20, 50, 100], Rare: [2, 4, 10, 20, 40], Epic: [1, 2, 4, 8, 16], Legendary: [1, 1, 2, 4, 8] };
-const UPGRADE_GOLD = [50, 150, 400, 1000, 2000];
+const SHARDS = {
+  Common: [2, 4, 6, 10, 15, 20, 30, 40, 60, 80, 100, 150, 200],
+  Rare: [1, 2, 3, 4, 6, 8, 10, 14, 18, 24, 30, 40, 50],
+  Epic: [1, 1, 1, 2, 2, 3, 4, 5, 6, 8, 10, 12, 15],
+  Legendary: [1, 1, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5, 6],
+};
+/** Gold per upgrade (× rarity): the first levels are quick, the last ones a long-term goal. */
+const UPGRADE_GOLD = [5, 10, 20, 40, 75, 125, 200, 300, 450, 650, 900, 1300, 2000];
 const RARITY_GOLD = { Common: 1, Rare: 2, Epic: 4, Legendary: 8 };
 
 export function upgradeCost(card, level) {
@@ -81,8 +87,8 @@ export function upgradeCost(card, level) {
 /** XP needed to reach each King level (index = level - 1). */
 export const XP_LEVELS = [0, 40, 120, 250, 450, 700, 1000, 1400, 1900, 2500, 3200, 4000, 5000, 6200];
 export const kingLevel = (xp) => XP_LEVELS.filter((x) => xp >= x).length;
-/** Towers start at level 9 and gain a level every King level, capped at 14. */
-export const towerLevel = (xp) => Math.min(MAX_CARD_LEVEL, START_LEVEL - 1 + kingLevel(xp));
+/** Towers are as strong as the King: level 1 at King level 1, up to 14. */
+export const towerLevel = (xp) => Math.min(MAX_CARD_LEVEL, kingLevel(xp));
 
 // ------------------------------------------------------------------ quests & season pass
 
@@ -162,7 +168,7 @@ export function newProfile(now = Date.now()) {
   const cards = {};
   for (const c of CARDS) cards[c.id] = { level: START_LEVEL, shards: 0 };
   return {
-    v: 1,
+    v: 2,
     trophies: STARTING.trophies,
     bestTrophies: STARTING.trophies,
     gold: STARTING.gold,

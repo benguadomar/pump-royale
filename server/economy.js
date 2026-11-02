@@ -48,6 +48,12 @@ export class Economy {
       p = newProfile();
       dirty = true;
     }
+    // v2: cards start at level 1 instead of 9 (old levels 9..14 become 1..6).
+    if ((p.v ?? 1) < 2) {
+      for (const c of Object.values(p.cards)) c.level = Math.max(START_LEVEL, c.level - 8);
+      p.v = 2;
+      dirty = true;
+    }
     for (const card of Object.values(CARD_BY_ID)) {
       if (!p.cards[card.id]) {
         p.cards[card.id] = { level: START_LEVEL, shards: 0 };

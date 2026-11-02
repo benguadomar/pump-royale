@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { uniform, uv, step, mix, color } from 'three/tsl';
 import { ARENA_W, ARENA_H, zoneAllows } from '../sim/constants.js';
-import { CARD_BY_ID, SPEEDS, TOWERS, isSpell } from '../data/cards.js';
+import { CARD_BY_ID, SPEEDS, TOWERS, isSpell, LEVEL_BUFF } from '../data/cards.js';
 import { buildUnit, makeTowerObject, Animator, ghostify, flashMat, frozenMat, rageMat } from './models.js';
 import { tileToWorld } from './engine.js';
 import { sfx } from '../audio.js';
@@ -12,7 +12,6 @@ const TEAM_RGB = [[0.45, 0.75, 1], [1, 0.45, 0.4]];
 const PROJECTILE_ARC = { arrow: 0.6, bomb: 2.4, fireball: 0.9, cannonball: 0.5, bullet: 0.05, bolt: 0.15, dragonfire: 0.3, spellFireball: 4, spellArrows: 5, spellBarrel: 5 };
 const PROJECTILE_SIZE = { bomb: 0.28, cannonball: 0.26, fireball: 0.38, bullet: 0.07, bolt: 0.13, dragonfire: 0.22, spellFireball: 0.75, spellBarrel: 0.45 };
 const BEAM_COLOR = { tesla: 0x9ff6ff, inferno: [0xff9a2a, 0xff4d14, 0xfff1c0] };
-const TOWER_LEVEL = 11;
 const DEATH_TIME = 0.5;
 const HIT_STOP = 0.065;
 /** Units whose blows freeze attacker and victim for a beat. */
@@ -117,7 +116,7 @@ export class BattleView {
   }
 
   /** Tower health plate: level badge + team bar + exact hitpoints, redrawn on change. */
-  makeTowerPlate(team, maxHp) {
+  makeTowerPlate(team, maxHp, level) {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
     canvas.height = 64;
@@ -126,7 +125,7 @@ export class BattleView {
     const sprite = new THREE.Sprite(new THREE.SpriteNodeMaterial({ map: tex, transparent: true, depthTest: false }));
     sprite.scale.set(3.6, 0.9, 1);
     sprite.renderOrder = 22;
-    const plate = { sprite, canvas, tex, team, maxHp, shown: -1 };
+    const plate = { sprite, canvas, tex, team, maxHp, level, shown: -1 };
     this.drawPlate(plate, maxHp);
     return plate;
   }
@@ -157,7 +156,7 @@ export class BattleView {
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     g.fillStyle = '#fff';
-    g.fillText(String(TOWER_LEVEL), 28, 34);
+    g.fillText(String(plate.level), 28, 34);
     g.lineWidth = 4;
     g.strokeStyle = 'rgba(0,0,0,0.7)';
     g.strokeText(String(v), 145, 34);
@@ -171,7 +170,9 @@ export class BattleView {
       const obj = makeTowerObject(e.towerKind, e.team);
       obj.position.copy(tileToWorld(e.x, e.y));
       obj.scale.setScalar(this.towerScale);
-      const plate = this.makeTowerPlate(e.team, e.maxHp);
+      // The tower's level follows from its hitpoints (+5 % per level above 1).
+      const level = Math.max(1, Math.round((e.maxHp / TOWERS[e.towerKind].hp - 1) / LEVEL_BUFF + 1));
+      const plate = this.makeTowerPlate(e.team, e.maxHp, level);
       const sculptTop = obj.userData.crew?.style === 'sculpt' ? obj.userData.crew.height : null;
       plate.sprite.position.y = sculptTop ? sculptTop + 1.1 : e.towerKind === 'king' ? 6.3 : 5.5;
       obj.add(plate.sprite);

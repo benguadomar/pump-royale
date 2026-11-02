@@ -182,12 +182,13 @@ for (const [gx, cx] of [[9, 9], [8.4, 9.6], [10, 9]]) {
   const giMoved = 10 - gi.y;
   check('heavy body pushes the light one', skMoved > giMoved * 20 && sk.vy > gi.vy, `skeleton moved ${skMoved.toFixed(3)}, giant ${giMoved.toFixed(4)}`);
 }
-// Levels: +10 % per level.
+// Levels: cards start at 1 with their table stats; every level adds +5 %.
 {
-  const sim = new BattleSim([deck, deck], { seed: 3, levels: [12, 10] });
+  const sim = new BattleSim([deck, deck], { seed: 3, levels: [3, 1] });
   const a = sim.spawnUnit(CARD_BY_ID.barbarian, 0, 5, 5);
   const b = sim.spawnUnit(CARD_BY_ID.barbarian, 1, 5, 25);
-  check('card level scales stats', Math.abs(a.maxHp / b.maxHp - 1.21) < 0.01, (a.maxHp / b.maxHp).toFixed(3));
+  check('level 1 has the card table stats', b.maxHp === CARD_BY_ID.barbarian.hp, `${b.maxHp}`);
+  check('card level scales stats (+5 % per level)', Math.abs(a.maxHp / b.maxHp - 1.1) < 0.001, (a.maxHp / b.maxHp).toFixed(3));
   const t0 = sim.entities.find((e) => e.kind === 'tower' && e.team === 0 && e.towerKind === 'king');
   check('tower level follows player level', Math.round(t0.maxHp) === Math.round(4824 * 1.1));
 }

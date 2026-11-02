@@ -3777,3 +3777,9 @@ button.res-pill:hover {
   vertical-align: -3px;
   margin-right: 3px;
 }
+
+/* next-level gain on card stats */
+.stat-up {
+  color: #7fe07a;
+  font-weight: 900;
+}

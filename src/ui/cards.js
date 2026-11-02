@@ -1,7 +1,7 @@
 import { h, img } from './dom.js';
 import { openModal } from './modal.js';
 import { sfx } from '../audio.js';
-import { CARDS, TOWERS, cardImg, isSpell, TOWER_SPELL_FACTOR } from '../data/cards.js';
+import { CARDS, TOWERS, cardImg, isSpell, TOWER_SPELL_FACTOR, levelMult, LEVEL_BUFF } from '../data/cards.js';
 import { upgradeCost, MAX_CARD_LEVEL, START_LEVEL } from '../data/economy.js';
 import { net } from '../net.js';
 import { econ } from './progress.js';
@@ -39,20 +39,30 @@ export function cardTile(card, { selected, inDeck, onclick } = {}) {
 
 export const kindLabel = (card) => `${card.rarity ?? 'Common'} ${card.type}${card.count > 1 ? ` · x${card.count}` : ''}`;
 
-function statRow(label, value, fraction) {
+/** `up`: how much the next level adds (shown in green). */
+function statRow(label, value, fraction, up = 0) {
   return h(
     'div',
     { class: 'stat' },
-    h('div', { class: 'stat-top' }, h('span', {}, label), h('span', {}, value)),
+    h('div', { class: 'stat-top' }, h('span', {}, label), h('span', {}, value, up > 0 && h('small', { class: 'stat-up' }, ` +${up}`))),
     h('div', { class: 'stat-bar' }, h('div', { style: { width: `${Math.round(Math.min(1, fraction ?? 0) * 100)}%` } })),
   );
 }
 
+/** A stat at the card's current level, and what one more level adds. */
+function leveled(card, base) {
+  const level = owned(card.id).level;
+  const now = Math.round(base * levelMult(level));
+  return [now, level < MAX_CARD_LEVEL ? Math.round(base * levelMult(level + 1)) - now : 0];
+}
+
 function spellStats(card) {
   const sp = card.spell;
+  const [dmg, dmgUp] = leveled(card, card.damage);
+  const [tower, towerUp] = leveled(card, card.damage * TOWER_SPELL_FACTOR);
   const rows = [
-    statRow('Damage', card.damage, card.damage / BAR_MAX.damage),
-    statRow('Crown Tower Damage', Math.round(card.damage * TOWER_SPELL_FACTOR), (card.damage * TOWER_SPELL_FACTOR) / BAR_MAX.damage),
+    statRow('Damage', dmg, dmg / BAR_MAX.damage, dmgUp),
+    statRow('Crown Tower Damage', tower, tower / BAR_MAX.damage, towerUp),
     statRow('Radius', `${sp.radius} tiles`, sp.radius / 5),
   ];
   if (sp.waves > 1) rows.push(statRow('Volleys', `${sp.waves} × ${Math.round(card.damage / sp.waves)}`, 0));
@@ -64,10 +74,13 @@ function spellStats(card) {
 function cardStats(card) {
   if (isSpell(card)) return spellStats(card);
   const rangeVal = card.range === 'Melee' ? 'Melee' : card.range.toFixed(1);
+  const [hp, hpUp] = leveled(card, card.hp);
+  const [dmg, dmgUp] = leveled(card, card.damage);
+  const [dps, dpsUp] = leveled(card, card.dps);
   const rows = [
-    statRow('Hitpoints', card.hp, card.hp / BAR_MAX.hp),
-    statRow('Damage', card.damage, card.damage / BAR_MAX.damage),
-    statRow('Damage / sec', card.dps, card.dps / BAR_MAX.dps),
+    statRow('Hitpoints', hp, hp / BAR_MAX.hp, hpUp),
+    statRow('Damage', dmg, dmg / BAR_MAX.damage, dmgUp),
+    statRow('Damage / sec', dps, dps / BAR_MAX.dps, dpsUp),
     statRow('Hit Speed', `${card.hitSpeed.toFixed(1)}s`, card.hitSpeed / BAR_MAX.hitSpeed),
     statRow('Range', rangeVal, card.range === 'Melee' ? 0.1 : card.range / BAR_MAX.range),
     statRow('Move Speed', card.speed ?? '—', 0),
@@ -89,7 +102,7 @@ function upgradeRow(card) {
   return h(
     'div',
     { class: 'upgrade-row' },
-    h('b', {}, `Level ${own.level}`),
+    h('b', {}, `Level ${own.level}`, h('small', { class: 'dim' }, ` · +${Math.round(LEVEL_BUFF * 100)}% hitpoints & damage per level`)),
     h('button', { class: 'btn gold', disabled: !canShards || !canGold, onclick: async () => {
       const r = await econ({ t: 'upgrade', card: card.id });
       if (r) sfx.win();

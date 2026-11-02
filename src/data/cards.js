@@ -233,9 +233,11 @@ export const CARDS = [
 /** Card rarity drives its frame colour and (later) its upgrade costs. */
 export const RARITIES = { Common: 0x9fb4c7, Rare: 0xf0a43a, Epic: 0xb455e8, Legendary: 0x52e3d9 };
 export const MAX_LEVEL = 14;
-export const BASE_LEVEL = 11;
-/** Stats in this table are level 11; every level is worth 10 %. */
-export const levelMult = (level = BASE_LEVEL) => 1.1 ** (level - BASE_LEVEL);
+/** Every card starts at level 1; the stats in this table are its level-1 stats. */
+export const BASE_LEVEL = 1;
+/** Each level above 1 adds 5 % hitpoints and damage (level 14 = +65 %). */
+export const LEVEL_BUFF = 0.05;
+export const levelMult = (level = BASE_LEVEL) => 1 + LEVEL_BUFF * (level - BASE_LEVEL);
 /** Crown towers only take part of a spell's damage. */
 export const TOWER_SPELL_FACTOR = 0.35;
 export const isSpell = (card) => card.type === 'Spell';
