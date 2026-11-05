@@ -33,6 +33,8 @@ const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
 /** Battle camera: behind the player's side, tilted ~50° down, moderate perspective. */
 const BATTLE_ELEVATION = THREE.MathUtils.degToRad(50);
 const BATTLE_FOV = 46;
+/** LOW graphics renders at this fraction of HIGH's pixel ratio. */
+const LOW_PIXEL_SCALE = 0.7;
 
 /**
  * Owns the WebGPU renderer (WebGL2 fallback), the diorama scene and the camera rig.
@@ -76,7 +78,7 @@ export class Engine {
     this.renderer = new THREE.WebGPURenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     // Always on: WebGPU materials compiled with shadows don't rebuild if this flips at runtime
-    // (the scene goes blank). Graphics settings toggle the sun's castShadow instead.
+    // (the scene goes blank), so graphics settings never touch shadows.
     this.renderer.shadowMap.enabled = true;
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = 0.92;
@@ -157,14 +159,18 @@ export class Engine {
     return () => this.updaters.delete(fn);
   }
 
+  /**
+   * HIGH and LOW render the same scene through the same post pipeline: LOW only draws fewer
+   * pixels and runs a lighter ambient-occlusion pass. Lights, shadows and materials never change,
+   * because rebuilding WebGPU pipelines mid-game left the screen (or some units) black.
+   */
   applyGraphics() {
     const high = state.settings.graphics === 'high';
-    this.renderer.setPixelRatio(high ? Math.min(window.devicePixelRatio, 2) : Math.min(window.devicePixelRatio, 1) * 0.85);
-    this.sun.castShadow = high;
+    const dpr = Math.min(window.devicePixelRatio, 2);
+    this.renderer.setPixelRatio(high ? dpr : dpr * LOW_PIXEL_SCALE);
+    this.aoNode.resolutionScale = high ? 0.5 : 0.35;
+    this.aoNode.samples.value = high ? 12 : 6;
     this.resize();
-    this.useBloom = high;
-    this.world.setDetail(high);
-    this.fx.maxParticles = high ? this.fx.capacity : Math.floor(this.fx.capacity / 2);
   }
 
   setMode(mode) {
@@ -406,8 +412,7 @@ export class Engine {
     this.world.update(dt, t);
     for (const fn of this.updaters) fn(gdt, this.gameTime);
     this.fx.update(gdt);
-    if (this.useBloom) this.pipeline.render();
-    else this.renderer.render(this.scene, this.camera);
+    this.pipeline.render();
   }
 
   buildLights() {
@@ -415,6 +420,7 @@ export class Engine {
     this.scene.add(new THREE.HemisphereLight(0xdcefff, 0x6a7d4a, 0.75));
     const sun = new THREE.DirectionalLight(0xffecd0, 3.0);
     sun.position.set(-22, 46, 18);
+    sun.castShadow = true;
     sun.shadow.mapSize.set(4096, 4096);
     Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30, near: 1, far: 120 });
     sun.shadow.bias = -0.0005;
