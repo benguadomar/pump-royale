@@ -3896,3 +3896,9 @@ button.res-pill:hover {
   font-weight: 800;
   color: #c9a6ff;
 }
+.sol-icon {
+  width: 1.25em;
+  height: 1.25em;
+  margin-right: 0.3em;
+  vertical-align: -0.28em;
+}

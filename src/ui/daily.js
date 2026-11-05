@@ -1,6 +1,6 @@
 import { h, img } from './dom.js';
 import { openModal } from './modal.js';
-import { toastMsg, secondsToUtcMidnight } from './widgets.js';
+import { toastMsg, secondsToUtcMidnight, solIcon } from './widgets.js';
 import { econ, rewardText, fmtSecs } from './progress.js';
 import { net } from '../net.js';
 import { sfx } from '../audio.js';
@@ -65,7 +65,7 @@ export function showNotices() {
       h('b', {}, `#${n.rank}`),
       h('span', {}, `on ${n.day}`),
       h('span', {}, rewardText(n.reward)),
-      n.sol && h('span', { class: 'sol-prize' }, `◎ ${n.sol} SOL${n.wallet ? ' — on its way to your wallet' : ' — add your wallet in Profile to receive it'}`),
+      n.sol && h('span', { class: 'sol-prize' }, solIcon(), `${n.sol} SOL${n.wallet ? ' — on its way to your wallet' : ' — add your wallet in Profile to receive it'}`),
     ),
   );
   openModal({

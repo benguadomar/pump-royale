@@ -6,6 +6,9 @@ import { openModal } from './modal.js';
 import { leaderboardReward, LEADERBOARD_SIZE, solPrize } from '../data/economy.js';
 
 export const CONTRACT_ADDRESS = 'SOON_0000';
+/** The Solana logo, sized to sit inline with text. */
+export const solIcon = () => img('/assets/ui/solana.png', 'sol-icon', 'SOL');
+
 export const BADGE_COLORS = ['#e8b021', '#3c8ce8', '#d8443a', '#3cbc5a', '#9b5ae0', '#2ec4c4', '#ee7a2e', '#6f7f95'];
 
 /** Ladder title beside a name: "#12" for the trophy top 100 (gold for the top 10). */
@@ -250,7 +253,7 @@ export function openLadderRewards() {
       h('b', {}, label),
       h('span', {}, img('/assets/ui/gem.png', 'icon'), r.gems),
       h('span', {}, img('/assets/ui/coin.png', 'icon'), r.gold),
-      h('span', { class: `sol-prize${sol ? '' : ' none'}` }, sol ? `◎ ${sol} SOL` : '—'),
+      h('span', { class: `sol-prize${sol ? '' : ' none'}` }, sol ? [solIcon(), `${sol} SOL`] : '—'),
     );
   });
   openModal({
@@ -260,7 +263,7 @@ export function openLadderRewards() {
     body: [
       h('p', { class: 'dim' }, `The top 10 of the trophy ladder are paid every day at 00:00 UTC. Everyone in the top ${LEADERBOARD_SIZE} wears their rank (#1 … #${LEADERBOARD_SIZE}) beside their name.`),
       ...rows,
-      h('p', { class: 'sol-note' }, '◎ The top 3 also win real Solana, sent to the wallet address in their profile — add yours to be eligible.'),
+      h('p', { class: 'sol-note' }, solIcon(), 'The top 3 also win real Solana, sent to the wallet address in their profile — add yours to be eligible.'),
     ],
   });
 }

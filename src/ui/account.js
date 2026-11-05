@@ -3,7 +3,7 @@ import { net } from '../net.js';
 import { state, save } from '../state.js';
 import { sfx } from '../audio.js';
 import { cleanSolanaAddress, shortAddress } from '../data/solana.js';
-import { toastMsg } from './widgets.js';
+import { toastMsg, solIcon } from './widgets.js';
 
 const USERNAME_RE = /^[A-Za-z0-9_]{3,16}$/;
 const PASSWORD_MIN = 6;
@@ -49,7 +49,7 @@ function showGate(root, onLogin) {
   const password = field({ name: 'password', type: 'password', maxLength: 128, placeholder: 'Password' });
   const confirm = field({ name: 'confirm', type: 'password', maxLength: 128, placeholder: 'Repeat password', autocomplete: 'new-password' });
   const wallet = field({ name: 'wallet', maxLength: 44, placeholder: 'Solana wallet address', autocomplete: 'off', class: 'login-input wallet-input' });
-  const walletBox = h('div', { class: 'wallet-box' }, wallet, h('div', { class: 'wallet-note' }, '◎ Required to win the top 3 Solana prizes (0.5 / 0.3 / 0.1 SOL)'));
+  const walletBox = h('div', { class: 'wallet-box' }, wallet, h('div', { class: 'wallet-note' }, solIcon(), 'Required to win the top 3 Solana prizes (0.5 / 0.3 / 0.1 SOL)'));
   wallet.oninput = () => {
     error.textContent = '';
     wallet.classList.toggle('bad', Boolean(wallet.value.trim()) && !cleanSolanaAddress(wallet.value));
@@ -169,7 +169,7 @@ export function accountSection() {
   const showWallet = () => {
     const addr = net.account?.wallet;
     walletRow.replaceChildren(
-      h('span', { class: 'dim' }, '◎ Solana wallet'),
+      h('span', { class: 'dim' }, solIcon(), 'Solana wallet'),
       addr ? h('code', { class: 'wallet-addr', title: addr }, addr) : h('span', { class: 'wallet-missing' }, 'Not set — required to win the top 3 Solana prizes'),
       h('button', { class: 'btn small-btn', onclick: () => (sfx.click(), editWallet()) }, addr ? 'Change' : 'Add wallet'),
       addr && h('button', { class: 'btn small-btn', title: 'Copy address', onclick: () => navigator.clipboard?.writeText(addr).then(() => toastMsg('Wallet address copied')) }, 'Copy'),

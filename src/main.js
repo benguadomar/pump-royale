@@ -34,6 +34,7 @@ const LOADING_LINES = ['Summoning champions...', 'Brewing elixir...', 'Compiling
 const UI_IMAGES = [
   '/assets/ui/logo.png',
   '/assets/ui/coin.png',
+  '/assets/ui/solana.png',
   '/assets/ui/gem.png',
   '/assets/ui/elixir.png',
   '/assets/ui/icon-cards.png',
