@@ -49,7 +49,7 @@ function showGate(root, onLogin) {
   const password = field({ name: 'password', type: 'password', maxLength: 128, placeholder: 'Password' });
   const confirm = field({ name: 'confirm', type: 'password', maxLength: 128, placeholder: 'Repeat password', autocomplete: 'new-password' });
   const wallet = field({ name: 'wallet', maxLength: 44, placeholder: 'Solana wallet address', autocomplete: 'off', class: 'login-input wallet-input' });
-  const walletBox = h('div', { class: 'wallet-box' }, wallet, h('div', { class: 'wallet-note' }, solIcon(), 'Required to win the top 3 Solana prizes (0.5 / 0.3 / 0.1 SOL)'));
+  const walletBox = h('div', { class: 'wallet-box' }, wallet, h('div', { class: 'wallet-note' }, solIcon(), 'Required to win Solana prizes'));
   wallet.oninput = () => {
     error.textContent = '';
     wallet.classList.toggle('bad', Boolean(wallet.value.trim()) && !cleanSolanaAddress(wallet.value));
