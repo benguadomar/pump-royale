@@ -5,6 +5,7 @@ import { sfx, applyVolume } from '../audio.js';
 import { openModal } from './modal.js';
 import { leaderboardReward, LEADERBOARD_SIZE, solPrize } from '../data/economy.js';
 
+export const X_URL = 'https://x.com/pumproyale_x?s=11';
 export const CONTRACT_ADDRESS = '8499XHq97ey1yq8ofjmP3nEAvhCKve9YqjNApuNJpump';
 /** The full address is too long for the corner button; it shows the ends and copies all of it. */
 const shortCA = `${CONTRACT_ADDRESS.slice(0, 6)}…${CONTRACT_ADDRESS.slice(-6)}`;
@@ -91,7 +92,7 @@ export function mediaBox() {
     h(
       'div',
       { class: 'ca-row' },
-      h('button', { class: 'btn', title: 'Follow on X', onclick: () => window.open('https://x.com/', '_blank', 'noopener') }, icon('x')),
+      h('button', { class: 'btn', title: 'Follow on X', onclick: () => window.open(X_URL, '_blank', 'noopener') }, icon('x')),
       h('button', { class: 'btn ca-btn', title: `Copy contract address ${CONTRACT_ADDRESS}`, onclick: () => copy(CONTRACT_ADDRESS) }, h('span', { class: 'ca' }, 'CA:'), shortCA, icon('copy')),
     ),
   );

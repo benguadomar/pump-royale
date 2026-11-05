@@ -3,7 +3,7 @@ import { openCards } from './cards.js';
 import { openDeck } from './deck.js';
 import { openProfile } from './profile.js';
 import { openModal } from './modal.js';
-import { pingPill, leaderboardPanel, mediaBox, settingsBody, flag, toastMsg, rankTag, CONTRACT_ADDRESS } from './widgets.js';
+import { pingPill, leaderboardPanel, mediaBox, settingsBody, flag, toastMsg, rankTag, CONTRACT_ADDRESS, X_URL } from './widgets.js';
 import { sfx } from '../audio.js';
 import { net } from '../net.js';
 import { state, save, currentArena } from '../state.js';
@@ -16,7 +16,6 @@ import { openDaily, dailyClaimable, showNotices } from './daily.js';
 import { openPlayer } from './playerCard.js';
 import { openShop } from './shop.js';
 
-const X_URL = 'https://x.com/';
 /** "Win: 50 gold · 30 XP · better chests", plus a warning when it is below your own arena. */
 function arenaPrize(arena, i) {
   const w = ARENA_WIN[i];
