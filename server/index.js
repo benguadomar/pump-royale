@@ -408,7 +408,7 @@ function handle(ws, msg) {
       return;
     }
     case 'player-profile': {
-      // Public view of any player by username: stats, cards and recent matches (never the wallet).
+      // Public view of any player by username: stats, cards, recent matches and their prize wallet.
       const user = store.userByName(String(msg.name ?? ''));
       if (!user) return send(ws, { t: 'player-profile', name: msg.name, error: 'player' });
       const p = economy.profile(user.id);
@@ -421,6 +421,7 @@ function handle(ws, msg) {
           player: {
             name: user.username,
             country: rec?.country ?? null,
+            wallet: store.account(user.id)?.solana ?? null,
             rank: ranking.rankOf(user.id),
             clan: clan ? { name: clan.name, tag: clan.tag, badge: clan.badge } : null,
             trophies: p.trophies,

@@ -3910,3 +3910,7 @@ button.res-pill:hover {
 .lb-table tr.clickable:hover td {
   background: rgba(255, 220, 140, 0.12);
 }
+.player-wallet {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+}

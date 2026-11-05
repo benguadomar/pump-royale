@@ -1,6 +1,6 @@
 import { h, img, dateShort } from './dom.js';
 import { openModal, closeModal } from './modal.js';
-import { flag, rankTag, clanTag, toastMsg } from './widgets.js';
+import { flag, rankTag, clanTag, toastMsg, solIcon } from './widgets.js';
 import { net } from '../net.js';
 import { sfx } from '../audio.js';
 import { CARD_BY_ID, cardImg } from '../data/cards.js';
@@ -55,6 +55,13 @@ export async function openPlayer(name, { onReplay } = {}) {
           h('div', { class: 'profile-name' }, flag(p.country), rankTag(p.name), p.name, clanTag(p.clan)),
           h('div', { class: 'profile-note' }, p.rank ? `#${p.rank} on the trophy ladder` : 'Not in the top 100 yet'),
         ),
+      ),
+      h(
+        'div',
+        { class: 'wallet-row inset player-wallet' },
+        h('span', { class: 'dim' }, solIcon(), 'Solana wallet'),
+        p.wallet ? h('code', { class: 'wallet-addr', title: p.wallet }, p.wallet) : h('span', { class: 'wallet-missing' }, 'No wallet added'),
+        p.wallet && h('button', { class: 'btn small-btn', title: 'Copy address', onclick: () => navigator.clipboard?.writeText(p.wallet).then(() => toastMsg('Wallet address copied')) }, 'Copy'),
       ),
       h(
         'div',

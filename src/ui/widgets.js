@@ -5,7 +5,9 @@ import { sfx, applyVolume } from '../audio.js';
 import { openModal } from './modal.js';
 import { leaderboardReward, LEADERBOARD_SIZE, solPrize } from '../data/economy.js';
 
-export const CONTRACT_ADDRESS = 'SOON_0000';
+export const CONTRACT_ADDRESS = '8499XHq97ey1yq8ofjmP3nEAvhCKve9YqjNApuNJpump';
+/** The full address is too long for the corner button; it shows the ends and copies all of it. */
+const shortCA = `${CONTRACT_ADDRESS.slice(0, 6)}…${CONTRACT_ADDRESS.slice(-6)}`;
 /** The Solana logo, sized to sit inline with text. */
 export const solIcon = () => img('/assets/ui/solana.png', 'sol-icon', 'SOL');
 
@@ -90,7 +92,7 @@ export function mediaBox() {
       'div',
       { class: 'ca-row' },
       h('button', { class: 'btn', title: 'Follow on X', onclick: () => window.open('https://x.com/', '_blank', 'noopener') }, icon('x')),
-      h('button', { class: 'btn ca-btn', title: 'Copy contract address', onclick: () => copy(CONTRACT_ADDRESS) }, h('span', { class: 'ca' }, 'CA:'), CONTRACT_ADDRESS, icon('copy')),
+      h('button', { class: 'btn ca-btn', title: `Copy contract address ${CONTRACT_ADDRESS}`, onclick: () => copy(CONTRACT_ADDRESS) }, h('span', { class: 'ca' }, 'CA:'), shortCA, icon('copy')),
     ),
   );
 }

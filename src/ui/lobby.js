@@ -3,7 +3,7 @@ import { openCards } from './cards.js';
 import { openDeck } from './deck.js';
 import { openProfile } from './profile.js';
 import { openModal } from './modal.js';
-import { pingPill, leaderboardPanel, mediaBox, settingsBody, flag, toastMsg, rankTag } from './widgets.js';
+import { pingPill, leaderboardPanel, mediaBox, settingsBody, flag, toastMsg, rankTag, CONTRACT_ADDRESS } from './widgets.js';
 import { sfx } from '../audio.js';
 import { net } from '../net.js';
 import { state, save, currentArena } from '../state.js';
@@ -106,7 +106,7 @@ function socialsBody() {
   return [
     h('h3', {}, 'SOCIALS'),
     h('button', { class: 'btn social-btn', onclick: () => window.open(X_URL, '_blank', 'noopener') }, icon('x'), 'Follow on X'),
-    h('button', { class: 'btn social-btn', disabled: true }, h('span', { class: 'ca' }, 'CA'), 'Coming soon'),
+    h('button', { class: 'btn social-btn', title: `Copy ${CONTRACT_ADDRESS}`, onclick: () => navigator.clipboard?.writeText(CONTRACT_ADDRESS).then(() => toastMsg('Contract address copied')) }, h('span', { class: 'ca' }, 'CA'), `${CONTRACT_ADDRESS.slice(0, 6)}…${CONTRACT_ADDRESS.slice(-6)}`, icon('copy')),
   ];
 }
 
