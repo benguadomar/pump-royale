@@ -202,9 +202,14 @@ async function boot() {
     startBattle(new LocalSession(state.deck, match, currentArena().id));
   }
 
-  async function watchReplay(id, isPublic = false) {
-    const msg = await net.request({ t: 'replay', id, public: isPublic }, 'replay');
-    if (msg?.replay) startBattle(new ReplaySession(msg.replay.players ? { ...msg.replay, opp: msg.replay.players[1].name } : msg.replay));
+  /** `owner`: username whose stored match it is (from a player's profile); omitted for your own. */
+  async function watchReplay(id, isPublic = false, owner = null) {
+    const msg = await net.request({ t: 'replay', id, public: isPublic, player: owner ?? undefined }, 'replay');
+    if (!msg?.replay) return;
+    const session = new ReplaySession(msg.replay.players ? { ...msg.replay, opp: msg.replay.players[1].name } : msg.replay);
+    // Someone else's match: label the bottom side with their name instead of ours.
+    if (owner) session.spectator = { players: [{ name: owner, country: null }, { name: session.oppName, country: null }] };
+    startBattle(session);
   }
 
   function openOnline() {

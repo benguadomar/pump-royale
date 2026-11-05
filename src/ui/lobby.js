@@ -13,6 +13,7 @@ import { ARENA_WIN, arenaIndex, arenaTrophyFactor } from '../data/economy.js';
 import { resourceBar, chestSlots, questsBody } from './progress.js';
 import { openClan } from './clan.js';
 import { openDaily, dailyClaimable, showNotices } from './daily.js';
+import { openPlayer } from './playerCard.js';
 import { openShop } from './shop.js';
 
 const X_URL = 'https://x.com/';
@@ -110,7 +111,7 @@ function socialsBody() {
 }
 
 export function createLobby({ engine, chat, onPlay, onOnline, onReplay }) {
-  const lb = leaderboardPanel();
+  const lb = leaderboardPanel({ onPlayer: (name) => openPlayer(name, { onReplay }) });
   const destroyers = [lb.destroy];
 
   let openKey = null;

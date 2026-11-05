@@ -3902,3 +3902,11 @@ button.res-pill:hover {
   margin-right: 0.3em;
   vertical-align: -0.28em;
 }
+
+/* leaderboard rows open player profiles */
+.lb-table tr.clickable {
+  cursor: pointer;
+}
+.lb-table tr.clickable:hover td {
+  background: rgba(255, 220, 140, 0.12);
+}

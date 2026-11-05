@@ -399,10 +399,45 @@ function handle(ws, msg) {
     case 'replays':
       store.listReplays(id).then((list) => send(ws, { t: 'replays', list }));
       return;
-    case 'replay':
+    case 'replay': {
       if (msg.public) return send(ws, { t: 'replay', replay: store.publicReplay(String(msg.id ?? '')) });
-      store.getReplay(id, String(msg.id ?? '')).then((replay) => send(ws, { t: 'replay', replay }));
+      // Anyone may watch another player's stored matches from their public profile.
+      const owner = msg.player ? store.userByName(String(msg.player))?.id : id;
+      if (!owner) return send(ws, { t: 'replay', replay: null });
+      store.getReplay(owner, String(msg.id ?? '')).then((replay) => send(ws, { t: 'replay', replay }));
       return;
+    }
+    case 'player-profile': {
+      // Public view of any player by username: stats, cards and recent matches (never the wallet).
+      const user = store.userByName(String(msg.name ?? ''));
+      if (!user) return send(ws, { t: 'player-profile', name: msg.name, error: 'player' });
+      const p = economy.profile(user.id);
+      const clan = clans.clanOf(user.id);
+      const rec = store.get(user.id);
+      store.listReplays(user.id).then((replays) =>
+        send(ws, {
+          t: 'player-profile',
+          name: user.username,
+          player: {
+            name: user.username,
+            country: rec?.country ?? null,
+            rank: ranking.rankOf(user.id),
+            clan: clan ? { name: clan.name, tag: clan.tag, badge: clan.badge } : null,
+            trophies: p.trophies,
+            bestTrophies: p.bestTrophies,
+            xp: p.xp,
+            wins: p.wins,
+            losses: p.losses,
+            draws: p.draws,
+            cardStats: p.cardStats,
+            levels: Object.fromEntries(Object.entries(p.cards).map(([c, v]) => [c, v.level])),
+            joined: p.created,
+            replays: replays.slice(0, 10),
+          },
+        }),
+      );
+      return;
+    }
     case 'tv':
       return send(ws, { t: 'tv', live: matchmaker.liveList(), replays: store.publicReplays() });
     case 'spectate':

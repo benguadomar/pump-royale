@@ -173,7 +173,8 @@ export function fullscreenButton() {
  * Live leaderboard panel. `tabs` picks which boards are offered; the compact battle
  * version shows only the PvP wins board with streaks.
  */
-export function leaderboardPanel({ tabs = ['trophies', 'towers', 'cards', 'wins'], compact = false } = {}) {
+/** `onPlayer(name)`: tapping a row opens that player's profile. */
+export function leaderboardPanel({ tabs = ['trophies', 'towers', 'cards', 'wins'], compact = false, onPlayer = null } = {}) {
   let tab = tabs.includes('wins') && compact ? 'wins' : tabs[0];
   const ICON = { trophies: '/assets/ui/icon-trophy.png', towers: '/assets/ui/icon-crown.png', cards: '/assets/ui/icon-cards.png', wins: '/assets/ui/icon-trophy.png' };
   const LABEL = { trophies: 'TOP 100', towers: 'TOWERS', cards: 'CARDS', wins: 'WINS' };
@@ -212,7 +213,7 @@ export function leaderboardPanel({ tabs = ['trophies', 'towers', 'cards', 'wins'
       ...rows.map((r, i) =>
         h(
           'tr',
-          { class: `${r.name === state.name ? 'me' : ''}${ladder && i < 3 ? ` podium p${i + 1}` : ''}` },
+          { class: `${r.name === state.name ? 'me' : ''}${ladder && i < 3 ? ` podium p${i + 1}` : ''}${onPlayer ? ' clickable' : ''}`, title: onPlayer ? `View ${r.name}'s profile` : null, onclick: onPlayer ? () => onPlayer(r.name) : null },
           h('td', { class: ladder && i < 10 ? 'paid' : '' }, ladder && i < 10 ? h('span', { title: 'Paid daily at 00:00 UTC' }, i + 1) : i + 1),
           h('td', { class: 'name' }, h('div', { class: 'lb-name' }, flag(r.country), h('span', {}, r.name)), ladder && r.clan && h('div', { class: 'lb-clan' }, clanTag(r.clan))),
           h('td', {}, !wins && img(ICON[tab]), r.value),
