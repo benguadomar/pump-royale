@@ -142,6 +142,9 @@ export function dailyStatus(p, now = Date.now()) {
 // ------------------------------------------------------------------ leaderboard
 
 export const LEADERBOARD_SIZE = 100;
+/** Real Solana prizes for the daily top 3 (paid by the operator to the winners' wallets), on top of the in-game rewards. */
+export const SOL_PRIZES = [0.5, 0.3, 0.1];
+export const solPrize = (rank) => SOL_PRIZES[rank - 1] ?? 0;
 /** Paid every day at 00:00 UTC to the top 10 of the trophy board. */
 export function leaderboardReward(rank) {
   if (rank === 1) return { gems: 50, gold: 800 };

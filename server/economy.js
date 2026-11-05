@@ -3,7 +3,7 @@ import { CARD_BY_ID } from '../src/data/cards.js';
 import {
   newProfile, refreshQuests, applyMatch, grant, rollChest, upgradeCost, towerLevel, kingLevel,
   CHESTS, gemsToOpen, MAX_CARD_LEVEL, TROPHY_ROAD, PASS_TIERS, passReward, passTier, START_LEVEL,
-  DAILY_REWARDS, dailyStatus, dayKey, leaderboardReward,
+  DAILY_REWARDS, dailyStatus, dayKey, leaderboardReward, solPrize,
   CHEST_GEMS, shopOffers, hourKey,
 } from '../src/data/economy.js';
 import { ReplayDriver } from '../src/sim/replay.js';
@@ -317,12 +317,13 @@ export class Economy {
   }
 
   /** Credits a top-10 finish straight away and leaves a notice the player sees on next login. */
-  payLeaderboard(id, rank, day) {
+  payLeaderboard(id, rank, day, wallet = null) {
     const reward = leaderboardReward(rank);
     if (!reward) return null;
     const p = this.profile(id);
     grant(p, reward);
-    p.notices = [...(p.notices ?? []), { kind: 'leaderboard', rank, day, reward }].slice(-5);
+    const sol = solPrize(rank);
+    p.notices = [...(p.notices ?? []), { kind: 'leaderboard', rank, day, reward, ...(sol ? { sol, wallet: Boolean(wallet) } : {}) }].slice(-5);
     this.save(id, p);
     return p;
   }

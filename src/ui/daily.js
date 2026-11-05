@@ -58,7 +58,16 @@ export const dailyClaimable = () => Boolean(net.profile && dailyStatus(net.profi
 export function showNotices() {
   const list = net.profile?.notices ?? [];
   if (!list.length) return false;
-  const rows = list.map((n) => h('div', { class: 'ladder-reward inset' }, h('b', {}, `#${n.rank}`), h('span', {}, `on ${n.day}`), h('span', {}, rewardText(n.reward))));
+  const rows = list.map((n) =>
+    h(
+      'div',
+      { class: 'ladder-reward inset' },
+      h('b', {}, `#${n.rank}`),
+      h('span', {}, `on ${n.day}`),
+      h('span', {}, rewardText(n.reward)),
+      n.sol && h('span', { class: 'sol-prize' }, `◎ ${n.sol} SOL${n.wallet ? ' — on its way to your wallet' : ' — add your wallet in Profile to receive it'}`),
+    ),
+  );
   openModal({
     cls: 'ladder-modal',
     title: 'LADDER REWARD',

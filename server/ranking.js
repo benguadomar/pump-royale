@@ -1,4 +1,4 @@
-import { LEADERBOARD_SIZE, dayKey, leaderboardReward } from '../src/data/economy.js';
+import { LEADERBOARD_SIZE, dayKey, leaderboardReward, solPrize } from '../src/data/economy.js';
 import { log } from './log.js';
 
 const CACHE_MS = 2000;
@@ -59,9 +59,15 @@ export class Ranking {
     this.board();
     const winners = this.cached.ids.slice(0, 10);
     winners.forEach((id, i) => {
-      const profile = this.economy.payLeaderboard(id, i + 1, meta.paidDay);
+      const profile = this.economy.payLeaderboard(id, i + 1, meta.paidDay, this.store.account(id)?.solana);
       if (profile) this.onPaid(id, profile);
     });
+    // Solana prizes are sent by hand: keep who is owed what, and to which wallet.
+    const owed = winners.slice(0, 3).map((id, i) => ({ day: meta.paidDay, rank: i + 1, name: this.store.get(id)?.name ?? null, account: id, wallet: this.store.account(id)?.solana ?? null, sol: solPrize(i + 1), paid: false }));
+    if (owed.length) {
+      this.store.saveDoc('meta', 'sol-payouts', [...owed, ...(this.store.doc('meta', 'sol-payouts') ?? [])].slice(0, 300));
+      log.info('sol prizes owed', { day: meta.paidDay, owed: owed.map((o) => `#${o.rank} ${o.name} ${o.sol} SOL ${o.wallet ?? 'NO WALLET'}`) });
+    }
     this.store.saveDoc('meta', 'ladder', { paidDay: today, last: { day: meta.paidDay, winners: winners.map((id, i) => ({ rank: i + 1, name: this.store.get(id)?.name, reward: leaderboardReward(i + 1) })) } });
     log.info('ladder rewards paid', { day: meta.paidDay, players: winners.length });
   }

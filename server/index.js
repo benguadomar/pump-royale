@@ -1,4 +1,5 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -120,6 +121,26 @@ async function api(req, res, urlPath, query) {
     const name = String(query.get('username') ?? '').trim();
     const bad = usernameError(name);
     return json(res, 200, { available: !bad && !store.userByName(name), error: bad });
+  }
+  // Operator view of the Solana prizes owed (top 3 each day). Disabled unless ADMIN_TOKEN is set.
+  if (urlPath.startsWith('/api/admin/')) {
+    const token = String(req.headers['x-admin-token'] ?? query.get('token') ?? '');
+    const expected = process.env.ADMIN_TOKEN;
+    const given = Buffer.from(token);
+    if (!expected || !firewall.allow(ip, 'login') || given.length !== Buffer.byteLength(expected) || !crypto.timingSafeEqual(given, Buffer.from(expected))) return json(res, 404, { error: 'not found' });
+    const list = store.doc('meta', 'sol-payouts') ?? [];
+    if (urlPath === '/api/admin/sol-payouts' && req.method === 'GET') return json(res, 200, { owed: list.filter((o) => !o.paid).reduce((s, o) => s + o.sol, 0), payouts: list });
+    if (urlPath === '/api/admin/sol-payouts/paid' && req.method === 'POST') {
+      const body = await readBody(req);
+      const hit = list.find((o) => o.day === body.day && o.rank === Number(body.rank));
+      if (!hit) return json(res, 404, { error: 'payout' });
+      hit.paid = true;
+      hit.tx = String(body.tx ?? '').slice(0, 120) || null;
+      store.saveDoc('meta', 'sol-payouts', list);
+      log.info('sol prize marked paid', { day: hit.day, rank: hit.rank, tx: hit.tx });
+      return json(res, 200, hit);
+    }
+    return json(res, 404, { error: 'not found' });
   }
   if (urlPath === '/api/client-error' && req.method === 'POST') {
     if (!firewall.allow(ip, 'api')) return json(res, 429, { error: 'rate' });

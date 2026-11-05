@@ -3,7 +3,7 @@ import { net } from '../net.js';
 import { state, save } from '../state.js';
 import { sfx, applyVolume } from '../audio.js';
 import { openModal } from './modal.js';
-import { leaderboardReward, LEADERBOARD_SIZE } from '../data/economy.js';
+import { leaderboardReward, LEADERBOARD_SIZE, solPrize } from '../data/economy.js';
 
 export const CONTRACT_ADDRESS = 'SOON_0000';
 export const BADGE_COLORS = ['#e8b021', '#3c8ce8', '#d8443a', '#3cbc5a', '#9b5ae0', '#2ec4c4', '#ee7a2e', '#6f7f95'];
@@ -243,12 +243,24 @@ export function leaderboardPanel({ tabs = ['trophies', 'towers', 'cards', 'wins'
 export function openLadderRewards() {
   const rows = [[1, '🥇'], [2, '🥈'], [3, '🥉'], [4, '#4 – #10']].map(([rank, label]) => {
     const r = leaderboardReward(rank);
-    return h('div', { class: 'ladder-reward inset' }, h('b', {}, label), h('span', {}, img('/assets/ui/gem.png', 'icon'), r.gems), h('span', {}, img('/assets/ui/coin.png', 'icon'), r.gold));
+    const sol = solPrize(rank);
+    return h(
+      'div',
+      { class: 'ladder-reward inset' },
+      h('b', {}, label),
+      h('span', {}, img('/assets/ui/gem.png', 'icon'), r.gems),
+      h('span', {}, img('/assets/ui/coin.png', 'icon'), r.gold),
+      h('span', { class: `sol-prize${sol ? '' : ' none'}` }, sol ? `◎ ${sol} SOL` : '—'),
+    );
   });
   openModal({
     cls: 'ladder-modal',
     title: 'DAILY LADDER REWARDS',
     iconSrc: '/assets/ui/icon-trophy.png',
-    body: [h('p', { class: 'dim' }, `The top 10 of the trophy ladder are paid every day at 00:00 UTC. Everyone in the top ${LEADERBOARD_SIZE} wears their rank (#1 … #${LEADERBOARD_SIZE}) beside their name.`), ...rows],
+    body: [
+      h('p', { class: 'dim' }, `The top 10 of the trophy ladder are paid every day at 00:00 UTC. Everyone in the top ${LEADERBOARD_SIZE} wears their rank (#1 … #${LEADERBOARD_SIZE}) beside their name.`),
+      ...rows,
+      h('p', { class: 'sol-note' }, '◎ The top 3 also win real Solana, sent to the wallet address in their profile — add yours to be eligible.'),
+    ],
   });
 }
