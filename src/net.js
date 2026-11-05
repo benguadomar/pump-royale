@@ -1,5 +1,14 @@
 import { state, save } from './state.js';
 
+/**
+ * Game server origin when the page is hosted somewhere else (e.g. Netlify): set VITE_SERVER_URL
+ * at build time. Empty means the page and the server share one origin.
+ */
+const SERVER = (import.meta.env.VITE_SERVER_URL ?? '').replace(/\/$/, '');
+export const apiUrl = (path) => `${SERVER}${path}`;
+/** ngrok's free tier answers browser requests with a warning page unless this header is sent. */
+export const apiHeaders = SERVER ? { 'ngrok-skip-browser-warning': '1' } : {};
+
 const PING_INTERVAL_MS = 2000;
 const RECONNECT_MS = 3000;
 
@@ -69,7 +78,7 @@ function emit(type, data) {
 
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws = new WebSocket(SERVER ? `${SERVER.replace(/^http/, 'ws')}/ws` : `${proto}://${location.host}/ws`);
 
   ws.onopen = () => {
     net.connected = true;

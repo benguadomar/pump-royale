@@ -1,6 +1,8 @@
 import { log } from './log.js';
 
 const PROD = process.env.NODE_ENV === 'production';
+/** Sites allowed to host the game page and call this server (comma-separated), e.g. a Netlify URL. */
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '').split(',').map((s) => s.trim().replace(/\/$/, '')).filter(Boolean);
 // Local dev and the test bots hammer the server from one address; production gets the real limits.
 const SCALE = PROD ? 1 : 20;
 
@@ -129,6 +131,7 @@ export function trustedPost(req) {
   if (!String(req.headers['content-type'] ?? '').startsWith('application/json')) return false;
   const origin = req.headers.origin;
   if (!origin) return true;
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
   try {
     const host = new URL(origin).host;
     const allowed = [req.headers.host, req.headers['x-forwarded-host'], process.env.PUBLIC_URL && new URL(process.env.PUBLIC_URL).host];
@@ -153,6 +156,23 @@ const CSP = [
   "form-action 'self'",
   "object-src 'none'",
 ].join('; ');
+
+/**
+ * Lets an allowed outside page (ALLOWED_ORIGINS) call the API from the browser. Returns true when
+ * the request was a CORS preflight that has been answered.
+ */
+export function cors(req, res) {
+  const origin = req.headers.origin;
+  if (!origin || !ALLOWED_ORIGINS.includes(origin)) return false;
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, ngrok-skip-browser-warning');
+  res.setHeader('Access-Control-Max-Age', '600');
+  if (req.method !== 'OPTIONS') return false;
+  res.writeHead(204).end();
+  return true;
+}
 
 /** Browser-side hardening on every response. */
 export function secureHeaders(res) {

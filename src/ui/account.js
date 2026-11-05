@@ -1,5 +1,5 @@
 import { h, img } from './dom.js';
-import { net } from '../net.js';
+import { net, apiUrl, apiHeaders } from '../net.js';
 import { state, save } from '../state.js';
 import { sfx } from '../audio.js';
 import { cleanSolanaAddress, shortAddress } from '../data/solana.js';
@@ -23,7 +23,7 @@ const ERRORS = {
 
 async function post(path, body) {
   try {
-    const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await fetch(apiUrl(path), { method: 'POST', headers: { 'Content-Type': 'application/json', ...apiHeaders }, body: JSON.stringify(body) });
     return await res.json();
   } catch {
     return { error: 'network' };
@@ -73,7 +73,7 @@ function showGate(root, onLogin) {
       return;
     }
     checkTimer = setTimeout(async () => {
-      const res = await fetch(`/api/auth/available?username=${encodeURIComponent(name)}`)
+      const res = await fetch(apiUrl(`/api/auth/available?username=${encodeURIComponent(name)}`), { headers: apiHeaders })
         .then((r) => r.json())
         .catch(() => null);
       if (!res || username.value.trim() !== name || mode !== 'register') return;

@@ -8,7 +8,7 @@ import { loadTowerModels } from './render/models.js';
 import { EMOTES, emoteImg } from './data/emotes.js';
 import { state, save, recordMatch, currentArena } from './state.js';
 import { ARENA_BY_ID } from './data/arenas.js';
-import { net } from './net.js';
+import { net, apiUrl, apiHeaders } from './net.js';
 import { sfx, loadAudio, playMusic } from './audio.js';
 import { h, img, app } from './ui/dom.js';
 import { createChat } from './ui/chat.js';
@@ -62,7 +62,7 @@ const say = (key) => AI_LINES[key][Math.floor(Math.random() * AI_LINES[key].leng
 let reported = 0;
 function reportError(message, stack) {
   if (import.meta.env.DEV || reported++ > 10) return;
-  fetch('/api/client-error', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, stack, url: location.href }) }).catch(() => {});
+  fetch(apiUrl('/api/client-error'), { method: 'POST', headers: { 'Content-Type': 'application/json', ...apiHeaders }, body: JSON.stringify({ message, stack, url: location.href }) }).catch(() => {});
 }
 window.addEventListener('error', (e) => reportError(e.message, e.error?.stack));
 window.addEventListener('unhandledrejection', (e) => reportError(String(e.reason?.message ?? e.reason), e.reason?.stack));

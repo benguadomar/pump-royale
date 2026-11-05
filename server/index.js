@@ -172,6 +172,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (urlPath.startsWith('/api/')) {
+    if (firewall.cors(req, res)) return;
     api(req, res, urlPath, url.searchParams).catch((e) => {
       captureError(e, { extra: { path: urlPath } });
       json(res, 500, { error: 'server' });

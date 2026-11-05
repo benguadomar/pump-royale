@@ -6,3 +6,4 @@ server/data-backups
 .vid
 /gameplay.mp4
 .env
+dist-netlify
