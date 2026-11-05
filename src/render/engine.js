@@ -75,6 +75,9 @@ export class Engine {
 
     this.renderer = new THREE.WebGPURenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    // Always on: WebGPU materials compiled with shadows don't rebuild if this flips at runtime
+    // (the scene goes blank). Graphics settings toggle the sun's castShadow instead.
+    this.renderer.shadowMap.enabled = true;
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = 0.92;
 
@@ -157,8 +160,8 @@ export class Engine {
   applyGraphics() {
     const high = state.settings.graphics === 'high';
     this.renderer.setPixelRatio(high ? Math.min(window.devicePixelRatio, 2) : Math.min(window.devicePixelRatio, 1) * 0.85);
-    this.renderer.shadowMap.enabled = high;
     this.sun.castShadow = high;
+    this.resize();
     this.useBloom = high;
     this.world.setDetail(high);
     this.fx.maxParticles = high ? this.fx.capacity : Math.floor(this.fx.capacity / 2);
