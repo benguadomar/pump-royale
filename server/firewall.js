@@ -36,10 +36,23 @@ const recent = (list, windowMs, now) => {
   return list;
 };
 
-/** The caller's address. Fly's edge sets Fly-Client-IP; elsewhere trust only the socket. */
+/**
+ * Behind a tunnel or CDN (ngrok, Cloudflare) every request arrives from the proxy, so the real
+ * player address must come from its header — or every player would share one rate limit.
+ */
+const TRUST_PROXY = process.env.TRUST_PROXY === '1' || Boolean(process.env.NGROK_AUTHTOKEN);
+
+/** The caller's address. Fly's edge sets Fly-Client-IP; trusted proxies set CF-Connecting-IP / X-Forwarded-For. */
 export function ipOf(req) {
   const fly = req.headers['fly-client-ip'];
-  return (typeof fly === 'string' && fly) || req.socket.remoteAddress || 'unknown';
+  if (typeof fly === 'string' && fly) return fly;
+  if (TRUST_PROXY) {
+    const cf = req.headers['cf-connecting-ip'];
+    if (typeof cf === 'string' && cf) return cf;
+    const fwd = String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim();
+    if (fwd) return fwd;
+  }
+  return req.socket.remoteAddress || 'unknown';
 }
 
 export function banned(ip) {

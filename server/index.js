@@ -13,9 +13,11 @@ import { Ranking } from './ranking.js';
 import { log, captureError, sentryEnabled } from './log.js';
 import { usernameKey, usernameError } from './auth.js';
 import * as firewall from './firewall.js';
+import { startTunnel } from './tunnel.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.PORT) || 8787;
+// Panel hosts (Pterodactyl/Altare) give the allocated port as SERVER_PORT.
+const PORT = Number(process.env.SERVER_PORT || process.env.PORT) || 8787;
 const DIST = path.join(__dirname, '..', 'dist');
 const BOOTED = Date.now();
 
@@ -543,7 +545,10 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-server.listen(PORT, () => log.info('server listening', { port: PORT, storage: store.kind, sentry: sentryEnabled }));
+server.listen(PORT, () => {
+  log.info('server listening', { port: PORT, storage: store.kind, sentry: sentryEnabled });
+  startTunnel(PORT);
+});
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.on(sig, () => {

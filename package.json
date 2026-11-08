@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",
+    "@ngrok/ngrok": "^1.7.0",
     "@typegpu/gl": "^0.12.8",
     "@typegpu/noise": "^0.12.1",
     "@typegpu/three": "^0.12.2",
