@@ -200,6 +200,37 @@ export const riverNormal = t3.toTSL(() => {
   );
 });
 
+// ------------------------------------------------------------------ waterfalls
+
+const fallFade = t3.attribute('fade', d.f32);
+const fallAcross = t3.attribute('across', d.f32);
+
+/**
+ * Waterfall water: the river's look (same palette, flowing ripples and caustic web) streaming
+ * down a ribbon. uv.x is metres across the stream, uv.y metres along it; pale foam at the
+ * edges, and the alpha fades the stream out toward its tail.
+ */
+export const waterfallColor = t3.toTSL(() => {
+  'use gpu';
+  const uv = t3.uv().$;
+  const t = t3.time.$;
+  const p = d.vec2f(uv.x * 1.7, uv.y * 0.5 - t * 1.9);
+  const flow = perlin2d.sample(p * d.vec2f(0.6, 1.4) + d.vec2f(t * 0.1, 0.0));
+  const ripples = perlin2d.sample(p * 2.2 + flow * 0.8);
+  const across = std.abs(fallAcross.$ - 0.5) * 2;
+  const deep = uWaterDeep.$;
+  const shallow = uWaterShallow.$;
+  let col = std.mix(deep, shallow, across * 0.35 + ripples * 0.25 + 0.25);
+  const c1 = 1 - std.abs(perlin2d.sample(p * 1.5 + d.vec2f(0.0, -t * 0.6) + flow * 0.6));
+  const c2 = 1 - std.abs(perlin2d.sample(p * 2.3 + d.vec2f(7.3, 2.1 - t * 0.9)));
+  const web = std.pow(std.max(c1, c2), 9);
+  col = col + d.vec3f(0.62, 0.9, 1.0) * web * 0.8;
+  const foam = std.smoothstep(0.55, 1.0, across) * 0.6 + std.smoothstep(0.74, 0.9, ripples) * 0.25;
+  col = std.mix(col, d.vec3f(0.95, 0.99, 1.0), std.min(foam, 0.85));
+  const alpha = fallFade.$ * (1 - std.smoothstep(0.8, 1.0, across)) * 0.94;
+  return d.vec4f(toLinear(col), alpha);
+});
+
 // ------------------------------------------------------------------ surfaces
 
 /** Per-vertex [surface id, wind sway amplitude], written by the geometry builders. */

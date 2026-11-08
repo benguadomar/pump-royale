@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ARENA_W, ARENA_H, RIVER_Y, RIVER_HALF, BRIDGES_X, TOWER_LAYOUT } from '../sim/constants.js';
-import { fieldColor, fieldNormal, riverColor, riverNormal, surfaceColor, surfaceRoughness, surfaceMetalness, windPosition, cloudPosition, cloudColor, SURF } from './shaders.js';
+import { fieldColor, fieldNormal, riverColor, riverNormal, waterfallColor, surfaceColor, surfaceRoughness, surfaceMetalness, windPosition, cloudPosition, cloudColor, SURF } from './shaders.js';
 import { makeTowerObject, makeSurfaceMaterial } from './models.js';
 import { placeHouse } from './houses.js';
 
@@ -270,43 +270,272 @@ function roundTower(r, x, y, z, s, roof) {
 /** Irregular radius around an island blob so outlines look hand-sculpted rather than circular. */
 const blobRadius = (rad, seed) => (a) => rad * (1 + 0.09 * Math.sin(3 * a + seed) + 0.05 * Math.sin(5 * a + seed * 2.3));
 
-function shapeRing(g, cx, cz, f) {
-  const pos = g.attributes.position;
-  for (let i = 0; i < pos.count; i++) {
-    const px = pos.getX(i);
-    const pz = pos.getZ(i);
-    const len = Math.hypot(px, pz);
-    if (len < 1e-4) continue;
-    const k = f(Math.atan2(pz, px));
-    pos.setXYZ(i, cx + px * k, pos.getY(i), cz + pz * k);
+/**
+ * The main island's outline as a signed-distance field: a rounded rectangle fused with
+ * round lobes of extra land (smooth union), sampled into a radial table so skins and
+ * placement can ask "how far is the shore in direction a".
+ */
+function makeOutline(A, B, corner, lobes, blend) {
+  const smin = (a, b) => {
+    const h = Math.max(blend - Math.abs(a - b), 0) / blend;
+    return Math.min(a, b) - h * h * blend * 0.25;
+  };
+  const sdf = (x, z) => {
+    const qx = Math.abs(x) - (A - corner);
+    const qz = Math.abs(z) - (B - corner);
+    let d = Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0) - corner;
+    for (const l of lobes) d = smin(d, Math.hypot(x - l.x, z - l.z) - l.r);
+    return d;
+  };
+  const N = 360;
+  const table = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    const dx = Math.cos(a);
+    const dz = Math.sin(a);
+    let lo = 0;
+    let hi = 90;
+    for (let k = 0; k < 32; k++) {
+      const m = (lo + hi) / 2;
+      if (sdf(dx * m, dz * m) < 0) lo = m;
+      else hi = m;
+    }
+    table[i] = lo;
   }
+  const radius = (a) => {
+    const t = ((((a / (Math.PI * 2)) % 1) + 1) % 1) * N;
+    const i = Math.floor(t);
+    const f = t - i;
+    return table[i] * (1 - f) + table[(i + 1) % N] * f;
+  };
+  return { sdf, radius };
+}
+
+/**
+ * Smooth island body: a rounded grass lip over an earth cliff that tapers to a point,
+ * built as rings around `radius(angle)` with smooth normals (no boulders, no hard edges).
+ */
+function terrainSkin({ radius, cx = 0, cz = 0, topY = 0, depth, seg, grass, seed = 0 }) {
+  const earth = PALETTE.earth;
+  const dark = PALETTE.earthDark;
+  const rings = [
+    // [scale, y, colour, surface, wobble]
+    [1.0, 0, grass, SURF.grass, 0],
+    [1.018, -0.2, grass, SURF.grass, 0],
+    [1.0, -0.5, shadeHex(grass, 0.8), SURF.grass, 0],
+    [1.0, -0.52, earth, SURF.rock, 0],
+    [0.97, -1.0, shadeHex(earth, 0.95), SURF.rock, 0.01],
+    [0.9, -depth * 0.2, shadeHex(earth, 0.88), SURF.rock, 0.03],
+    [0.76, -depth * 0.42, shadeHex(earth, 0.78), SURF.rock, 0.06],
+    [0.55, -depth * 0.68, dark, SURF.rock, 0.1],
+    [0.3, -depth * 0.88, shadeHex(dark, 0.9), SURF.rock, 0.12],
+    [0.0, -depth, shadeHex(dark, 0.8), SURF.rock, 0],
+  ];
+  const nr = rings.length;
+  const pos = new Float32Array(nr * seg * 3);
+  const col = new Float32Array(nr * seg * 3);
+  const surf = new Float32Array(nr * seg * 2);
+  const c = new THREE.Color();
+  for (let i = 0; i < nr; i++) {
+    const [scale, y, hex, sid, wob] = rings[i];
+    c.set(hex);
+    for (let j = 0; j < seg; j++) {
+      const a = (j / seg) * Math.PI * 2;
+      const w = 1 + wob * (0.6 * Math.sin(3 * a + seed + i) + 0.4 * Math.sin(5 * a + seed * 2.3 + i * 1.7));
+      const rr = radius(a) * scale * w;
+      const k = (i * seg + j) * 3;
+      pos[k] = cx + Math.cos(a) * rr;
+      pos[k + 1] = topY + y + wob * depth * 0.25 * Math.sin(4 * a + seed + i * 2.1);
+      pos[k + 2] = cz + Math.sin(a) * rr;
+      c.toArray(col, k);
+      surf[(i * seg + j) * 2] = sid;
+    }
+  }
+  const index = [];
+  for (let i = 0; i < nr - 1; i++) {
+    for (let j = 0; j < seg; j++) {
+      const j1 = (j + 1) % seg;
+      const a = i * seg + j;
+      const b = i * seg + j1;
+      const cc = (i + 1) * seg + j;
+      const d = (i + 1) * seg + j1;
+      index.push(a, b, cc, b, d, cc);
+    }
+  }
+  const side = new THREE.BufferGeometry();
+  side.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  side.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  side.setAttribute('surf', new THREE.BufferAttribute(surf, 2));
+  side.setIndex(index);
+  side.computeVertexNormals();
+
+  // Flat grass cap: a fan around the centre with straight-up normals.
+  const cap = new THREE.BufferGeometry();
+  const cp = new Float32Array((seg + 1) * 3);
+  const cn = new Float32Array((seg + 1) * 3);
+  const cc2 = new Float32Array((seg + 1) * 3);
+  const cs = new Float32Array((seg + 1) * 2);
+  c.set(grass);
+  cp.set([cx, topY, cz], 0);
+  for (let j = 0; j < seg; j++) {
+    cp.set(pos.subarray(j * 3, j * 3 + 3), (j + 1) * 3);
+    cp[(j + 1) * 3 + 1] = topY;
+  }
+  for (let j = 0; j <= seg; j++) {
+    cn[j * 3 + 1] = 1;
+    c.toArray(cc2, j * 3);
+    cs[j * 2] = SURF.grass;
+  }
+  const ci = [];
+  for (let j = 0; j < seg; j++) ci.push(0, ((j + 1) % seg) + 1, j + 1);
+  cap.setAttribute('position', new THREE.BufferAttribute(cp, 3));
+  cap.setAttribute('normal', new THREE.BufferAttribute(cn, 3));
+  cap.setAttribute('color', new THREE.BufferAttribute(cc2, 3));
+  cap.setAttribute('surf', new THREE.BufferAttribute(cs, 2));
+  cap.setIndex(ci);
+  return [side.toNonIndexed(), cap.toNonIndexed()];
+}
+
+/** One chunk of floating island: smooth skin over an irregular round outline. */
+function islandBlob(r, cx, cz, rad, topY, grass) {
+  const f = blobRadius(1, r() * 10);
+  const rim = (a) => rad * f(a);
+  const parts = terrainSkin({ radius: rim, cx, cz, topY, depth: 2.4 + rad * 1.5, seg: 56, grass, seed: r() * 10 });
+  return { parts, rim, x: cx, z: cz, rad, top: topY };
+}
+
+// ------------------------------------------------------------------ village props
+
+function well(r, x, y, z, s) {
+  const p = [];
+  p.push(gradient(tint(new THREE.CylinderGeometry(0.5, 0.56, 0.55, 12).translate(0, 0.275, 0), PALETTE.rock[0], null, SURF.brick), 0, 0.55, 0.75, 1));
+  p.push(tint(new THREE.CylinderGeometry(0.4, 0.4, 0.05, 12).translate(0, 0.5, 0), 0x3f93d8, null, SURF.plain));
+  for (const sx of [-1, 1]) p.push(tint(new THREE.BoxGeometry(0.09, 0.95, 0.09).translate(sx * 0.46, 1.0, 0), PALETTE.woodDark, null, SURF.wood));
+  p.push(tint(new THREE.CylinderGeometry(0.04, 0.04, 1.0, 6).rotateZ(Math.PI / 2).translate(0, 1.2, 0), PALETTE.wood, null, SURF.wood));
+  gableRoof(p, 1.2, 0.9, 1.45, PALETTE.roofRed, PALETTE.wall[0], 0.7);
+  return p.map((g) => at(g, x, y, z, r() * Math.PI, s));
+}
+
+function hayStack(r, x, y, z, s) {
+  const p = [];
+  const bale = (bx, by, bz, ry) => {
+    p.push(tint(new THREE.CylinderGeometry(0.42, 0.42, 0.8, 10).rotateZ(Math.PI / 2).rotateY(ry).translate(bx, by, bz), 0xe8c55c, null, SURF.plain));
+    for (const o of [-0.22, 0.22]) p.push(tint(new THREE.CylinderGeometry(0.435, 0.435, 0.05, 10).rotateZ(Math.PI / 2).rotateY(ry).translate(bx + Math.cos(ry) * o, by, bz - Math.sin(ry) * o), 0xb88a36, null, SURF.plain));
+  };
+  const ry = r() * Math.PI;
+  bale(-0.45, 0.42, 0, ry);
+  bale(0.45, 0.42, 0.1, ry + 0.2);
+  bale(0, 1.2, 0.05, ry + 0.1);
+  return p.map((g) => at(g, x, y, z, 0, s));
+}
+
+function fenceRun(r, x, y, z, ry, n, s) {
+  const p = [];
+  for (let k = 0; k <= n; k++) {
+    const hgt = 0.62 + r() * 0.08;
+    p.push(tint(new THREE.BoxGeometry(0.12, hgt, 0.12).translate(k * 0.55, hgt / 2, 0), PALETTE.wood, null, SURF.wood));
+  }
+  for (const yy of [0.28, 0.5]) p.push(tint(new THREE.BoxGeometry(n * 0.55 + 0.1, 0.07, 0.05).translate((n * 0.55) / 2, yy, 0), PALETTE.woodDark, null, SURF.wood));
+  p.forEach((g) => g.translate(-(n * 0.55) / 2, 0, 0));
+  return p.map((g) => at(g, x, y, z, ry, s));
+}
+
+function lamp(r, x, y, z, s) {
+  const p = [tint(new THREE.CylinderGeometry(0.05, 0.07, 1.5, 6).translate(0, 0.75, 0), PALETTE.woodDark, null, SURF.wood), tint(new THREE.BoxGeometry(0.22, 0.26, 0.22).translate(0, 1.62, 0), 0xffd36b, null, SURF.plain), tint(new THREE.ConeGeometry(0.2, 0.16, 4).translate(0, 1.84, 0), PALETTE.woodDark, null, SURF.wood)];
+  return p.map((g) => at(g, x, y, z, 0, s));
+}
+
+/** A little garden: pumpkins and wildflowers. */
+function garden(r, x, y, z, s) {
+  const p = [];
+  const colors = [0xf4a6c8, 0xffe066, 0xf6f1e8, 0xc79bf2];
+  for (let i = 0; i < 12; i++) {
+    const px = (r() - 0.5) * 1.6;
+    const pz = (r() - 0.5) * 1.6;
+    p.push(tint(new THREE.CylinderGeometry(0.012, 0.012, 0.22, 4).translate(px, 0.11, pz), 0x3f8f3c, null, SURF.leaves));
+    p.push(tint(new THREE.SphereGeometry(0.07, 6, 5).translate(px, 0.25, pz), colors[i % 4], null, SURF.plain));
+  }
+  for (let i = 0; i < 3; i++) p.push(tint(new THREE.SphereGeometry(0.2 + r() * 0.06, 8, 6).scale(1, 0.8, 1).translate((r() - 0.5) * 1.8, 0.16, 0.9 + r() * 0.3), 0xee8a2c, null, SURF.plain));
+  return p.map((g) => at(g, x, y, z, r() * Math.PI, s));
+}
+
+// ------------------------------------------------------------------ waterfalls
+
+/** Waterfall water: the river's shader (palette, ripples, caustics) flowing down the ribbon. */
+function makeWaterfallMaterial() {
+  const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.1, metalness: 0, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+  m.colorNode = waterfallColor;
+  return m;
+}
+
+/** A ribbon along `pts` (width `w` across `side`); uv.x runs across, uv.y is the length along it. */
+function ribbonGeometry(pts, widths, fades, side) {
+  const n = pts.length;
+  const pos = new Float32Array(n * 2 * 3);
+  const uvs = new Float32Array(n * 2 * 2);
+  const fade = new Float32Array(n * 2);
+  const across = new Float32Array(n * 2);
+  let len = 0;
+  for (let i = 0; i < n; i++) {
+    if (i) len += pts[i].distanceTo(pts[i - 1]);
+    for (const e of [0, 1]) {
+      const k = i * 2 + e;
+      const o = (e - 0.5) * widths[i];
+      pos.set([pts[i].x + side.x * o, pts[i].y, pts[i].z + side.z * o], k * 3);
+      uvs.set([o, len], k * 2);
+      fade[k] = fades[i];
+      across[k] = e;
+    }
+  }
+  const index = [];
+  for (let i = 0; i < n - 1; i++) {
+    const a = i * 2;
+    index.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  g.setAttribute('fade', new THREE.BufferAttribute(fade, 1));
+  g.setAttribute('across', new THREE.BufferAttribute(across, 1));
+  g.setIndex(index);
+  g.computeVertexNormals();
   return g;
 }
 
 /**
- * One chunk of floating island: thick bevelled grass cap, brown earth sides, a rocky
- * underside and grey boulders hugging the rim. Several overlapping blobs make one big island.
+ * A stream that runs over the grass to the shore at `angle` (from `cx`,`cz`), pours off the edge
+ * and thins out far below. Returns the meshes (to add to the island's group).
  */
-function islandBlob(r, cx, cz, rad, depth, topY = 0) {
-  const parts = [];
-  const f = blobRadius(1, r() * 10);
-  const grass = PALETTE.islandTop[Math.floor(r() * PALETTE.islandTop.length)];
-  const cap = shapeRing(new THREE.CylinderGeometry(rad, rad * 0.97, 0.4, 14, 1), cx, cz, f).translate(0, topY - 0.2, 0);
-  parts.push(gradient(tint(cap, grass, null, SURF.grass), topY - 0.4, topY, 0.78, 1.06));
-  const lip = shapeRing(new THREE.CylinderGeometry(rad * 0.98, rad * 0.95, 0.18, 14, 1), cx, cz, f).translate(0, topY - 0.48, 0);
-  parts.push(tint(lip, shadeHex(grass, 0.75), null, SURF.grass));
-  const earth = shapeRing(new THREE.CylinderGeometry(rad * 0.95, rad * 0.72, depth, 14, 2), cx, cz, f).translate(0, topY - 0.57 - depth / 2, 0);
-  parts.push(gradient(tint(earth, PALETTE.earth, null, SURF.rock), topY - 0.57 - depth, topY - 0.57, 0.6, 1.0));
-  const under = shapeRing(new THREE.ConeGeometry(rad * 0.72, depth * 1.3, 14, 1).rotateX(Math.PI), cx, cz, f);
-  under.translate(0, topY - 0.57 - depth - depth * 0.65, 0);
-  parts.push(gradient(tint(under, PALETTE.earthDark, null, SURF.rock), topY - 0.57 - depth * 2.3, topY - 0.57 - depth, 0.55, 0.9));
-  const rocks = Math.round(rad * 1.6);
-  for (let i = 0; i < rocks; i++) {
-    const a = (i / rocks) * Math.PI * 2 + r() * 0.5;
-    const rr = rad * f(a) * (0.86 + r() * 0.08);
-    parts.push(...boulder(r, cx + Math.cos(a) * rr, topY - 0.6 - depth * (0.45 + r() * 0.45), cz + Math.sin(a) * rr, 0.35 + r() * 0.45, r() < 0.4 ? 1 : 0));
+function waterfall({ cx, cz, angle, rim, topY, drop, width, waterMat }) {
+  const dx = Math.cos(angle);
+  const dz = Math.sin(angle);
+  const side = new THREE.Vector3(-dz, 0, dx);
+  const pts = [];
+  const widths = [];
+  const fades = [];
+  const run = 3.2;
+  for (let i = 0; i <= 5; i++) {
+    const d = rim - run + (run * i) / 5;
+    pts.push(new THREE.Vector3(cx + dx * d, topY + 0.04, cz + dz * d));
+    widths.push(width * (0.55 + 0.35 * (i / 5)));
+    fades.push(Math.min(1, 0.65 + i * 0.12));
   }
-  return parts;
+  const steps = 16;
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    const d = rim + 0.08 + 0.55 * t * t;
+    pts.push(new THREE.Vector3(cx + dx * d, topY + 0.04 - t * drop, cz + dz * d));
+    widths.push(width * (0.9 + 0.6 * t));
+    fades.push(1 - Math.pow(t, 2.2));
+  }
+  const water = new THREE.Mesh(ribbonGeometry(pts, widths, fades, side), waterMat);
+  water.frustumCulled = false;
+  water.renderOrder = 2;
+  // A second sheet across the first, so the falling water has body from every camera angle.
+  const cross = new THREE.Mesh(ribbonGeometry(pts.slice(5), widths.slice(5).map((w) => w * 0.85), fades.slice(5), new THREE.Vector3(dx, 0, dz)), waterMat);
+  cross.frustumCulled = false;
+  cross.renderOrder = 2;
+  return [water, cross];
 }
 
 export function buildWorld(engine) {
@@ -315,12 +544,20 @@ export function buildWorld(engine) {
   const vcMat = makeSurfaceMaterial();
   const grassMat = makeSurfaceMaterial({ flat: false });
   grassMat.side = THREE.DoubleSide;
+  const smoothMat = makeSurfaceMaterial({ flat: false });
+  const waterMat = makeWaterfallMaterial();
   const highOnly = [];
   const bobbers = [];
 
   const mergedMesh = (parts, { shadows = true } = {}) => {
     const mesh = new THREE.Mesh(mergeGeometries(parts), vcMat);
     mesh.castShadow = shadows;
+    mesh.receiveShadow = true;
+    return mesh;
+  };
+  const groundMesh = (parts) => {
+    const mesh = new THREE.Mesh(mergeGeometries(parts), smoothMat);
+    mesh.castShadow = true;
     mesh.receiveShadow = true;
     return mesh;
   };
@@ -341,15 +578,18 @@ export function buildWorld(engine) {
   const islandParts = [];
   const IW = ARENA_W + 12;
   const IH = ARENA_H + 10;
-  islandParts.push(tint(new THREE.BoxGeometry(IW, 1.2, IH).translate(0, -0.62, 0), PALETTE.grass));
-  islandParts.push(tint(new THREE.BoxGeometry(IW + 0.6, 3.5, IH + 0.6).translate(0, -2.9, 0), PALETTE.rock[0]));
-  const underside = new THREE.ConeGeometry(IW * 0.72, 22, 7).rotateX(Math.PI).scale(1, 1, IH / IW).translate(0, -15.5, 0);
-  islandParts.push(tint(underside, PALETTE.rockDark));
-  for (let i = 0; i < 10; i++) {
-    const a = r() * Math.PI * 2;
-    const rock = new THREE.DodecahedronGeometry(2 + r() * 3, 0).translate(Math.cos(a) * IW * 0.4, -6 - r() * 8, Math.sin(a) * IH * 0.4);
-    islandParts.push(tint(rock, PALETTE.rock[i % 3]));
-  }
+  // The land is one smooth body: a rounded rectangle with lobes of extra terrain attached
+  // around it (they carry houses and trees), tapering to an earth keel with no stone slabs.
+  const LOBES = [
+    { x: -18.5, z: 7, r: 6.2, fall: true, houses: ['blue', 'red'], extras: ['well', 'fence', 'lamp'] },
+    { x: 19, z: -8, r: 6.8, fall: true, houses: ['tower', 'blue'], extras: ['hay', 'garden', 'lamp'] },
+    { x: 14, z: 22, r: 5.8, houses: ['red'], extras: ['garden', 'fence'] },
+    { x: -12, z: -23, r: 6.2, houses: ['blue', 'red'], extras: ['well', 'fence'] },
+    { x: -7, z: 25.5, r: 5, houses: ['blue'], extras: ['hay', 'lamp'] },
+    { x: 9, z: -26, r: 5.2, houses: ['red'], extras: ['hay', 'garden'] },
+  ];
+  const outline = makeOutline(IW / 2, IH / 2, 6, LOBES, 3);
+  const groundParts = terrainSkin({ radius: outline.radius, topY: -0.02, depth: 17, seg: 300, grass: PALETTE.grass, seed: 3 });
 
   // Low cream stone walls with battlements just outside the field.
   const wallH = 0.9;
@@ -373,24 +613,76 @@ export function buildWorld(engine) {
     islandParts.push(tint(new THREE.ConeGeometry(1.15, 1.3, 8).translate(x, 2.5, z), PALETTE.roof[4]));
   }
 
-  // Forest: lots of pines scattered at random around the walls, and a few boulders.
+  // Forest and village: land is anything inside the outline; keep clear of the arena walls.
   const decoParts = [];
   const extraParts = [];
   const planted = [];
   const free = (x, z, gap) => planted.every((p) => Math.hypot(p.x - x, p.z - z) > gap + p.gap);
-  const inMargin = (x, z, pad) => (Math.abs(x) > hw + pad || Math.abs(z) > hh + pad) && Math.abs(x) < IW / 2 - 0.5 && Math.abs(z) < IH / 2 - 0.5;
-  for (let tries = 0, rocks = 0; tries < 2600 && rocks < 7; tries++) {
-    const x = (r() - 0.5) * IW;
-    const z = (r() - 0.5) * IH;
+  const onLand = (x, z, pad) => outline.sdf(x, z) < -pad;
+  const inMargin = (x, z, pad) => (Math.abs(x) > hw + pad || Math.abs(z) > hh + pad) && onLand(x, z, pad + 0.6);
+  const SPAN_X = IW + 22;
+  const SPAN_Z = IH + 22;
+
+  // Streams pour off the tips of two lobes into the sky; houses keep clear of their channels.
+  const waterfalls = [];
+  const streams = [];
+  for (const l of LOBES) {
+    if (!l.fall) continue;
+    const a = Math.atan2(l.z, l.x);
+    const rim = outline.radius(a) - 0.25;
+    planted.push({ x: Math.cos(a) * (rim - 1.7), z: Math.sin(a) * (rim - 1.7), gap: 2.3 });
+    for (let k = 0; k < 7; k++) streams.push({ x: Math.cos(a) * (rim - k * 0.55), z: Math.sin(a) * (rim - k * 0.55) });
+    waterfalls.push(...waterfall({ cx: 0, cz: 0, angle: a, rim, topY: -0.02, drop: 26, width: 1.7, waterMat }));
+  }
+
+  // Attached terrain: cottages facing the arena, wells, hay, gardens, fences and lamps.
+  const lobeSpot = (l, minR, maxR, gap) => {
+    for (let t = 0; t < 50; t++) {
+      const a = r() * Math.PI * 2;
+      const d = l.r * (minR + r() * (maxR - minR));
+      const x = l.x + Math.cos(a) * d;
+      const z = l.z + Math.sin(a) * d;
+      if (!inMargin(x, z, gap) || !free(x, z, gap)) continue;
+      planted.push({ x, z, gap });
+      return { x, z };
+    }
+    return null;
+  };
+  const lobeHomes = [];
+  for (const l of LOBES) {
+    for (const kind of l.houses) {
+      const p = lobeSpot(l, 0, 0.6, 1.9);
+      if (!p) continue;
+      const ry = Math.atan2(-p.x, -p.z) + (r() - 0.5) * 0.5;
+      // Builders always run so the random sequence (and every later prop) stays the same.
+      const made = kind === 'tower' ? roundTower(r, p.x, 0, p.z, 0.85, PALETTE.roofRed) : cottage(r, p.x, 0, p.z, 0.95, ry, kind === 'blue' ? PALETTE.roofBlue : PALETTE.roofRed);
+      const model = placeHouse(kind, p.x, 0, p.z, kind === 'tower' ? 0.85 : 0.95, ry + Math.PI);
+      if (model) lobeHomes.push(model);
+      else decoParts.push(...made);
+    }
+    for (const kind of l.extras) {
+      const p = lobeSpot(l, 0.15, 0.8, 1.1);
+      if (!p) continue;
+      if (kind === 'well') decoParts.push(...well(r, p.x, 0, p.z, 1));
+      else if (kind === 'hay') decoParts.push(...hayStack(r, p.x, 0, p.z, 1));
+      else if (kind === 'garden') decoParts.push(...garden(r, p.x, 0, p.z, 1));
+      else if (kind === 'lamp') decoParts.push(...lamp(r, p.x, 0, p.z, 1));
+      else if (kind === 'fence') decoParts.push(...fenceRun(r, p.x, 0, p.z, r() * Math.PI, 5, 1));
+    }
+  }
+
+  for (let tries = 0, rocks = 0; tries < 2600 && rocks < 5; tries++) {
+    const x = (r() - 0.5) * SPAN_X;
+    const z = (r() - 0.5) * SPAN_Z;
     const s = 0.45 + r() * 0.4;
-    if (!inMargin(x, z, 1.8) || !free(x, z, s * 1.6)) continue;
+    if (!inMargin(x, z, 3) || !free(x, z, s * 1.6)) continue;
     planted.push({ x, z, gap: s * 1.6 });
     decoParts.push(...boulder(r, x, 0, z, s, 1 + Math.floor(r() * 2)));
     rocks++;
   }
-  for (let tries = 0, trees = 0; tries < 9000 && trees < 170; tries++) {
-    const x = (r() - 0.5) * IW;
-    const z = (r() - 0.5) * IH;
+  for (let tries = 0, trees = 0; tries < 20000 && trees < 220; tries++) {
+    const x = (r() - 0.5) * SPAN_X;
+    const z = (r() - 0.5) * SPAN_Z;
     const s = 0.7 + r() * 0.55;
     if (!inMargin(x, z, 1.25) || !free(x, z, s * 0.62)) continue;
     planted.push({ x, z, gap: s * 0.62 });
@@ -407,17 +699,19 @@ export function buildWorld(engine) {
   }
 
   const island = new THREE.Group();
-  island.add(mergedMesh(islandParts), mergedMesh(decoParts));
+  island.add(groundMesh(groundParts), mergedMesh(islandParts), mergedMesh(decoParts), ...waterfalls, ...lobeHomes);
   const extra = mergedMesh(extraParts);
   island.add(extra);
   highOnly.push(extra);
 
-  // Grass tufts on the island margin around the walls.
+  // Grass tufts over all the land around the walls.
   const tufts = [];
-  for (let i = 0; i < 1800; i++) {
-    const x = (r() - 0.5) * (IW - 0.4);
-    const z = (r() - 0.5) * (IH - 0.4);
+  for (let i = 0; i < 4200; i++) {
+    const x = (r() - 0.5) * SPAN_X;
+    const z = (r() - 0.5) * SPAN_Z;
+    if (!onLand(x, z, 0.6)) continue;
     if (Math.abs(x) < hw + 0.6 && Math.abs(z) < hh + 0.6) continue;
+    if (streams.some((q) => Math.hypot(q.x - x, q.z - z) < 1.1)) continue;
     tufts.push(grassTuft(r, x, 0, z, 0.8 + r() * 0.6));
   }
   const tuftMesh = grassMesh(tufts);
@@ -509,47 +803,27 @@ export function buildWorld(engine) {
   // ---------------------------------------------------------------- floating islands
 
   // Villages are several blobs fused into one big island; hamlets and groves are smaller.
+  // Many carry a waterfall pouring off the rim into the sky.
   const KINDS = [
     ...Array(5).fill('village'),
     ...Array(8).fill('hamlet'),
     ...Array(10).fill('grove'),
   ];
-  // Pack islands snugly around the arena: for each one, try many directions and keep the
-  // spot closest to the arena's edge that doesn't overlap an island already placed.
-  const ARENA_GAP = 1.4;
-  const ISLAND_GAP = 0.7;
+  // Pack islands snugly around the land: for each one, try many directions and keep the
+  // spot closest to the shore that doesn't overlap an island already placed.
+  const ARENA_GAP = 2.4;
+  const ISLAND_GAP = 0.9;
   const islandSpots = [];
-  // Small house islets pressed right up against the arena, spaced evenly around its edge.
-  const ISLETS = 18;
-  const ISLET_RAD = 2.4;
-  const ISLET_GAP = 0.35;
-  {
-    const hx = IW / 2 + ISLET_RAD + ISLET_GAP;
-    const hz = IH / 2 + ISLET_RAD + ISLET_GAP;
-    const perimeter = 4 * (hx + hz);
-    for (let i = 0; i < ISLETS; i++) {
-      let t = ((i + 0.3 + r() * 0.4) / ISLETS) * perimeter;
-      let x;
-      let z;
-      if ((t -= 2 * hx) < 0) [x, z] = [hx + t, -hz];
-      else if ((t -= 2 * hz) < 0) [x, z] = [hx, hz + t];
-      else if ((t -= 2 * hx) < 0) [x, z] = [-hx - t, hz];
-      else [x, z] = [-hx, -hz - (t - 2 * hz)];
-      islandSpots.push({ x, z, rad: ISLET_RAD, kind: 'islet', score: 0 });
-    }
-  }
   for (const kind of KINDS) {
     const rad = kind === 'village' ? 9.5 : kind === 'hamlet' ? 4.8 : 2.9;
     let best = null;
     for (let tries = 0; tries < 160; tries++) {
       const a = r() * Math.PI * 2;
-      const dx = Math.cos(a);
-      const dz = Math.sin(a);
-      const edge = Math.min(IW / 2 / Math.max(Math.abs(dx), 1e-3), IH / 2 / Math.max(Math.abs(dz), 1e-3));
+      const edge = outline.radius(a);
       const dist = edge + rad + ARENA_GAP + r() * r() * 10;
-      const x = dx * dist;
-      const z = dz * dist;
-      if (Math.abs(x) < IW / 2 + rad + ARENA_GAP && Math.abs(z) < IH / 2 + rad + ARENA_GAP) continue;
+      const x = Math.cos(a) * dist;
+      const z = Math.sin(a) * dist;
+      if (outline.sdf(x, z) < rad + ARENA_GAP) continue;
       if (islandSpots.some((s) => Math.hypot(s.x - x, s.z - z) < s.rad + rad + ISLAND_GAP)) continue;
       const score = dist - edge;
       if (!best || score < best.score) best = { x, z, rad, kind, score };
@@ -558,8 +832,13 @@ export function buildWorld(engine) {
   }
 
   islandSpots.forEach((spot, idx) => {
+    const ground = [];
     const parts = [];
     const blobs = [];
+    const grass = PALETTE.islandTop[Math.floor(r() * PALETTE.islandTop.length)];
+    const ry = r() * Math.PI;
+    // Extra blobs sit a little higher than the main one so their tops never share a plane.
+    const higher = () => 0.12 + r() * 0.3;
     if (spot.kind === 'village') {
       blobs.push({ x: 0, z: 0, rad: 4.6 + r() * 0.8, top: 0 });
       const n = 2 + Math.floor(r() * 2);
@@ -567,17 +846,20 @@ export function buildWorld(engine) {
         const a = (i / n) * Math.PI * 2 + r() * 0.8;
         const rad = 2.6 + r() * 1.3;
         const off = blobs[0].rad * 0.62 + rad * 0.5;
-        blobs.push({ x: Math.cos(a) * off, z: Math.sin(a) * off, rad, top: (r() - 0.5) * 0.5 });
+        blobs.push({ x: Math.cos(a) * off, z: Math.sin(a) * off, rad, top: higher() });
       }
     } else if (spot.kind === 'hamlet') {
       blobs.push({ x: 0, z: 0, rad: 3.4 + r() * 0.9, top: 0 });
       if (r() < 0.6) {
         const a = r() * Math.PI * 2;
-        blobs.push({ x: Math.cos(a) * 3.2, z: Math.sin(a) * 3.2, rad: 2.0 + r() * 0.8, top: (r() - 0.5) * 0.4 });
+        blobs.push({ x: Math.cos(a) * 3.2, z: Math.sin(a) * 3.2, rad: 2.0 + r() * 0.8, top: higher() });
       }
-    } else if (spot.kind === 'islet') blobs.push({ x: 0, z: 0, rad: 1.85 + r() * 0.4, top: 0 });
-    else blobs.push({ x: 0, z: 0, rad: 1.7 + r() * 1.3, top: 0 });
-    for (const b of blobs) parts.push(...islandBlob(r, b.x, b.z, b.rad, 1.6 + b.rad * 0.35, b.top));
+    } else blobs.push({ x: 0, z: 0, rad: 1.7 + r() * 1.3, top: 0 });
+    for (const b of blobs) {
+      const made = islandBlob(r, b.x, b.z, b.rad, b.top, grass);
+      b.rim = made.rim;
+      ground.push(...made.parts);
+    }
 
     // Buildings on the biggest blob, trees and a rock scattered over the rest.
     const used = [];
@@ -594,6 +876,26 @@ export function buildWorld(engine) {
       return null;
     };
     const main = blobs[0];
+
+    // Waterfall: a stream over the grass that spills off the rim facing roughly toward the camera.
+    const falls = [];
+    if (spot.kind === 'village' || (spot.kind === 'hamlet' && r() < 0.6) || (spot.kind === 'grove' && r() < 0.3)) {
+      const w = (r() - 0.5) * 1.6;
+      const dx = Math.sin(w);
+      const dz = Math.cos(w);
+      const base = Math.atan2(dx * Math.sin(ry) + dz * Math.cos(ry), dx * Math.cos(ry) - dz * Math.sin(ry));
+      for (const off of [0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6, 2.2, -2.2]) {
+        const a = base + off;
+        const R = main.rim(a);
+        const px = main.x + Math.cos(a) * R;
+        const pz = main.z + Math.sin(a) * R;
+        if (blobs.some((b) => b !== main && Math.hypot(px - b.x, pz - b.z) < b.rad * 1.1)) continue;
+        for (const [back, gap] of [[0.5, 1.05], [1.5, 1.7], [2.7, 1.2]]) used.push({ x: main.x + Math.cos(a) * (R - back), z: main.z + Math.sin(a) * (R - back), gap });
+        falls.push(...waterfall({ cx: main.x, cz: main.z, angle: a, rim: R - 0.2, topY: main.top, drop: 11 + main.rad * 2, width: 0.8 + main.rad * 0.18, waterMat }));
+        break;
+      }
+    }
+
     // Sculpted buildings take the procedural ones' spots when loaded (which still draw the same randoms).
     const homes = [];
     const build = (kind, made, p, y, s, face) => {
@@ -615,13 +917,6 @@ export function buildWorld(engine) {
     } else if (spot.kind === 'hamlet') {
       const p = spotOn(main, 0, 0.25, 1.7);
       if (p) cottageAt(main, p, 0.8, r() * Math.PI * 2, r() < 0.5 ? PALETTE.roofBlue : PALETTE.roofRed);
-    } else if (spot.kind === 'islet') {
-      // One building per islet, facing the arena: mostly cottages, now and then a tower.
-      const p = spotOn(main, 0, 0.12, 1.2);
-      const face = Math.atan2(-spot.x, -spot.z);
-      const roof = idx % 2 ? PALETTE.roofBlue : PALETTE.roofRed;
-      if (p && idx % 5 === 3) parts.push(...roundTower(r, p.x, 0, p.z, 0.6, PALETTE.roofRed));
-      else if (p) parts.push(...cottage(r, p.x, 0, p.z, 0.62, face, roof));
     }
     for (const b of blobs) {
       const trees = spot.kind === 'grove' ? 1 + Math.floor(r() * 3) : Math.round(b.rad * 0.9);
@@ -630,13 +925,14 @@ export function buildWorld(engine) {
         if (p) parts.push(...pine(r, p.x, b.top, p.z, 0.75 + r() * 0.5));
       }
       if (r() < 0.6) {
-        const p = spotOn(b, 0.2, 0.7, 0.6);
+        const p = spotOn(b, 0.2, 0.6, 0.6);
         if (p) parts.push(...boulder(r, p.x, b.top, p.z, 0.4 + r() * 0.3, 1));
       }
     }
 
-    const mesh = mergedMesh(parts);
+    const mesh = parts.length ? mergedMesh(parts) : new THREE.Group();
     if (homes.length) mesh.add(...homes);
+    mesh.add(groundMesh(ground), ...falls);
     const islandTufts = [];
     for (const b of blobs) {
       for (let i = 0; i < b.rad * 8; i++) {
@@ -651,12 +947,11 @@ export function buildWorld(engine) {
     const islandGrass = grassMesh(islandTufts);
     mesh.add(islandGrass);
     highOnly.push(islandGrass);
-    const islet = spot.kind === 'islet';
-    const baseY = islet ? -0.75 + r() * 0.45 : -3 + r() * 4.5 - spot.score * 0.15;
+    const baseY = -3 + r() * 4.5 - spot.score * 0.15;
     mesh.position.set(spot.x, baseY, spot.z);
-    mesh.rotation.y = islet ? 0 : r() * Math.PI;
+    mesh.rotation.y = ry;
     scene.add(mesh);
-    bobbers.push({ mesh, baseY, phase: r() * Math.PI * 2, speed: 0.3 + r() * 0.4, amp: islet ? 0.18 : 0.6 });
+    bobbers.push({ mesh, baseY, phase: r() * Math.PI * 2, speed: 0.3 + r() * 0.4, amp: 0.6 });
     if (spot.kind === 'grove' && idx % 2) highOnly.push(mesh);
   });
 
@@ -735,6 +1030,7 @@ export function buildWorld(engine) {
         const x = (pr() - 0.5) * (IW - 1);
         const z = (pr() - 0.5) * (IH - 1);
         if (Math.abs(x) < hw + pad && Math.abs(z) < hh + pad) continue;
+        if (!onLand(x, z, 1.2)) continue;
         return [x, z];
       }
       return [IW / 2 - 1, 0];
