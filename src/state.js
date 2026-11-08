@@ -1,5 +1,6 @@
 import { CARD_BY_ID, DEFAULT_DECK } from './data/cards.js';
 import { ARENA_BY_ID, arenaFor } from './data/arenas.js';
+import { countryFromTimeZone, countryFromLanguages } from './data/country.js';
 
 const KEY = 'pump-royale:v1';
 const MAX_HISTORY = 20;
@@ -14,14 +15,19 @@ function load() {
 
 const saved = load();
 
-/** Two-letter region from the browser locale (e.g. "fr-TN" -> "TN"), used for chat/feed flags. */
-function detectCountry() {
-  for (const tag of navigator.languages ?? [navigator.language]) {
-    const region = tag?.split(/[-_]/)[1];
-    if (region && /^[A-Za-z]{2}$/.test(region)) return region.toUpperCase();
+function timeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return null;
   }
-  return null;
 }
+
+/** Browser-side country hints; the server prefers its IP geolocation and corrects state.country. */
+export const countryHints = {
+  tz: countryFromTimeZone(timeZone()),
+  lang: countryFromLanguages(navigator.languages ?? [navigator.language]),
+};
 const isValidDeck = (d) => Array.isArray(d) && d.length === 8 && new Set(d).size === 8 && d.every((id) => CARD_BY_ID[id]);
 
 export const state = {
@@ -32,7 +38,7 @@ export const state = {
   /** The account's unique username once logged in. */
   name: saved.name || 'Player',
   deck: isValidDeck(saved.deck) ? saved.deck : [...DEFAULT_DECK],
-  country: detectCountry(),
+  country: countryHints.tz ?? countryHints.lang,
   settings: { volume: 0.25, music: 0.35, muted: false, graphics: 'high', ...saved.settings },
   stats: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, ...saved.stats },
   history: Array.isArray(saved.history) ? saved.history : [],

@@ -1,4 +1,4 @@
-import { state, save } from './state.js';
+import { state, save, countryHints } from './state.js';
 
 /**
  * Game server origin when the page is hosted somewhere else (e.g. Netlify): set VITE_SERVER_URL
@@ -69,7 +69,7 @@ export const net = {
 };
 
 function hello() {
-  net.send({ t: 'hello', token: state.token, id: state.id, country: state.country });
+  net.send({ t: 'hello', token: state.token, id: state.id, country: state.country, tzCountry: countryHints.tz, langCountry: countryHints.lang });
 }
 
 function emit(type, data) {
@@ -171,6 +171,7 @@ function adoptSession(msg) {
   state.token = msg.token;
   state.id = msg.account.id;
   if (msg.account.username) state.name = msg.account.username;
+  if (msg.country) state.country = msg.country;
   save();
   net.account = msg.account;
   emit('session', msg);

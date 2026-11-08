@@ -14,6 +14,7 @@ import { log, captureError, sentryEnabled } from './log.js';
 import { usernameKey, usernameError } from './auth.js';
 import * as firewall from './firewall.js';
 import { startTunnel } from './tunnel.js';
+import { countryOfRequest, pickCountry } from './geo.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Panel hosts (Pterodactyl/Altare) give the allocated port as SERVER_PORT.
@@ -55,8 +56,6 @@ const cleanName = (s) =>
     .trim()
     .slice(0, MAX_NAME_LEN) || 'Player';
 const cleanText = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_MSG_LEN);
-const cleanCountry = (s) => (/^[A-Z]{2}$/.test(String(s ?? '')) ? s : null);
-
 const clans = new Clans(store, economy, {
   notify: (ids, msg) => ids.forEach((id) => sockets.get(id)?.forEach((ws) => send(ws, msg))),
   isOnline: (id) => Boolean(sockets.get(id)?.size),
@@ -300,20 +299,20 @@ function hello(ws, msg) {
     return send(ws, { t: 'session', token: out.token, account: accounts.view(account) });
   }
   const id = account.id;
-  const country = cleanCountry(msg.country);
+  const country = pickCountry({ geo: ws.geoCountry, tz: msg.tzCountry, lang: msg.langCountry, legacy: msg.country });
   const known = store.has(id);
   store.upsert(id, cleanName(account.username), country);
   const alreadyConnected = sockets.has(id);
   detach(ws);
-  ws.player = { id, name: store.get(id).name, country };
+  ws.player = { id, name: store.get(id).name, country: store.get(id).country };
   attach(ws, id);
-  send(ws, { t: 'session', token: out.token, account: accounts.view(out.account), name: ws.player.name });
+  send(ws, { t: 'session', token: out.token, account: accounts.view(out.account), name: ws.player.name, country: store.get(id).country });
   send(ws, { t: 'profile', profile: economy.profile(id) });
   const clan = clans.clanOf(id);
   send(ws, { t: 'clan', clan: clan ? clans.view(clan, id) : null });
   send(ws, { t: 'welcome', online: onlineCount(), chat: store.chat, feed: feedHistory, leaderboard: leaderboard(), storage: store.kind });
   if (!alreadyConnected) {
-    pushFeed({ kind: known ? 'back' : 'join', name: ws.player.name, country });
+    pushFeed({ kind: known ? 'back' : 'join', name: ws.player.name, country: ws.player.country });
     broadcast({ t: 'online', count: onlineCount() });
     if (clan) clans.broadcast(clan);
   }
@@ -511,6 +510,7 @@ wss.on('connection', (ws, req) => {
   const ip = firewall.ipOf(req);
   if (!firewall.admitSocket(ip)) return ws.close(1008, 'blocked');
   ws.ip = ip;
+  ws.geoCountry = countryOfRequest(req, ip);
   ws.lastChat = 0;
   ws.tokens = BUCKET_SIZE;
   ws.refilled = performance.now();

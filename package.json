@@ -7,7 +7,7 @@
     "dev": "concurrently -k -n server,web -c yellow,cyan \"node --watch server/index.js\" \"vite\"",
     "build": "vite build",
     "start": "NODE_ENV=production node server/index.js",
-    "test": "node tests/mechanics.mjs && node tests/balance.mjs 200",
+    "test": "node tests/country.mjs && node tests/mechanics.mjs && node tests/balance.mjs 200",
     "duels": "node tests/duels.mjs"
   },
   "dependencies": {
@@ -16,6 +16,7 @@
     "@typegpu/gl": "^0.12.8",
     "@typegpu/noise": "^0.12.1",
     "@typegpu/three": "^0.12.2",
+    "geoip-country": "^5.0.202610280233",
     "three": "^0.186.1",
     "typegpu": "^0.12.9",
     "ws": "^8.22.0"
